@@ -55,7 +55,7 @@ for i in range(num_stats):
 
 # --- RUN MODEL ---
 
-if st.button("⚡ Run Model + Rank"):
+if st.button("⚡Calculate + Rank"):
     with st.spinner("Running model..."):
         try:
             raw_output = run_scrape(team1, team2)
