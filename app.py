@@ -36,14 +36,7 @@ def download_csv(file_id, filename):
 
 if st.button("🔁 Update CSVs from Drive"):
         success = []
-    for fname, fid in files.items():
-        if download_csv(fid, fname):
-            success.append(fname)
-    if len(success) == len(files):
-        st.success("✅ All CSVs updated successfully.")
-    else:
-        st.warning("⚠️ Some files failed to update.")
-
+    
 # --- TEAM INPUTS ---
 
 col1, col2 = st.columns(2)
