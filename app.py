@@ -12,8 +12,9 @@ st.title("⚾ Hib's Home Run Model")
 with st.expander("ℹ️ How to Use", expanded=True):
     st.markdown("""
     **Welcome to Hib's Tool!**
+    Disclaimer: Only will display full data for games in which lineups are currently out.
 
-    1. Enter the two MLB team abbreviations (e.g., `PHI`, `COL`).
+    1. Enter team abbreviations for both teams in a matchup. (ex. PHI COL)
     2. Choose how many stats you want to weight (1–4).
     3. Select the stat types and set your weights.
     4. Click **Run Model + Rank** to view the top hitters.
