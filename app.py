@@ -13,30 +13,14 @@ with st.expander("ℹ️ How to Use", expanded=True):
     st.markdown("""
     **Welcome to Hib's Tool!**
 
-    1. First, click **🔁 Update CSVs** to fetch the latest stats from Google Drive.
-    2. Enter the two MLB team abbreviations (e.g., `PHI`, `COL`).
-    3. Choose how many stats you want to weight (1–4).
-    4. Select the stat types and set your weights.
-    5. Click **Run Model + Rank** to view the top hitters.
+    1. Enter the two MLB team abbreviations (e.g., `PHI`, `COL`).
+    2. Choose how many stats you want to weight (1–4).
+    3. Select the stat types and set your weights.
+    4. Click **Run Model + Rank** to view the top hitters.
 
     Optional: Click **Show All Batter Stats** to see raw data (including `n/a`s).
     """)
 
-# --- Google Drive Auto-Downloader ---
-
-def download_csv(file_id, filename):
-    url = f"https://drive.google.com/uc?export=download&id={file_id}"
-    r = requests.get(url)
-    if r.status_code == 200:
-        with open(filename, "wb") as f:
-            f.write(r.content)
-        return True
-    else:
-        return False
-
-if st.button("🔁 Update CSVs from Drive"):
-        success = []
-    
 # --- TEAM INPUTS ---
 
 col1, col2 = st.columns(2)
@@ -52,13 +36,20 @@ num_stats = st.slider("How many stats do you want to weight?", 1, 4, 2)
 
 available_stats = ["EV", "Barrel %", "xSLG", "FB %", "RightFly", "LeftFly"]
 
+weight_defaults = {
+    1: [1.0],
+    2: [0.5, 0.5],
+    3: [0.33, 0.33, 0.34],
+    4: [0.25, 0.25, 0.25, 0.25]
+}.get(num_stats, [1.0])
+
 stat_selections = []
 weight_inputs = []
 
 for i in range(num_stats):
     cols = st.columns([2, 1])
     stat = cols[0].selectbox(f"Stat {i+1}", available_stats, key=f"stat_{i}")
-    weight = cols[1].number_input(f"Weight {i+1}", min_value=0.0, max_value=1.0, value=0.25, step=0.01, key=f"w_{i}")
+    weight = cols[1].number_input(f"Weight {i+1}", min_value=0.0, max_value=1.0, value=weight_defaults[i], step=0.01, key=f"w_{i}")
     stat_selections.append(stat)
     weight_inputs.append(weight)
 
