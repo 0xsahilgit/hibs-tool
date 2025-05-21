@@ -3,7 +3,6 @@ import streamlit as st
 import pandas as pd
 from scrape_stats import run_scrape
 from get_lineups import get_players_and_pitchers
-import requests
 
 # --- CONFIG ---
 
@@ -14,7 +13,8 @@ with st.expander("ℹ️ How to Use", expanded=True):
     st.markdown("""
     **Welcome to Hib's Tool!**
 
-        2. Enter the two MLB team abbreviations (e.g., `PHI`, `COL`).
+    1. First, click **🔁 Update CSVs** to fetch the latest stats from Google Drive.
+    2. Enter the two MLB team abbreviations (e.g., `PHI`, `COL`).
     3. Choose how many stats you want to weight (1–4).
     4. Select the stat types and set your weights.
     5. Click **Run Model + Rank** to view the top hitters.
@@ -24,13 +24,18 @@ with st.expander("ℹ️ How to Use", expanded=True):
 
 # --- Google Drive Auto-Downloader ---
 
-        "expected_batters.csv": "1pwL50l7c_CkhsjQv3sWbZLFTrF71Cq8z",
-        "expected_pitchers.csv": "1r89avc5FgKQN_-nm-E6lyfaK5ZceBrWW",
-        "exit_batters.csv": "1IQxPNDp1iQcJuMIgi8jZAa-kWJeFqkcQ",
-        "exit_pitchers.csv": "15ZVcJNsL6SiIAA2Q4QuTTLQLT7St01B4",
-        "batted_ball.csv": "1V3Z0gNdmO9ZC7Ii0ECyd2K5U4mtDx-yO"
-    }
-    success = []
+def download_csv(file_id, filename):
+    url = f"https://drive.google.com/uc?export=download&id={file_id}"
+    r = requests.get(url)
+    if r.status_code == 200:
+        with open(filename, "wb") as f:
+            f.write(r.content)
+        return True
+    else:
+        return False
+
+if st.button("🔁 Update CSVs from Drive"):
+        success = []
     for fname, fid in files.items():
         if download_csv(fid, fname):
             success.append(fname)
