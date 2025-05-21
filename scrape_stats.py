@@ -1,4 +1,4 @@
-
+from get_lineups import get_players_and_pitchers
 import pandas as pd
 import numpy as np
 import re
