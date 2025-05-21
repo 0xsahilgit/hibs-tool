@@ -7,7 +7,7 @@ from get_lineups import get_players_and_pitchers
 # --- CONFIG ---
 
 st.set_page_config(page_title="Hib's Tool", layout="wide")
-st.title("⚾ Hib's Home Run Model")
+st.title("⚾ Hib's Batter Data Tool")
 
 with st.expander("ℹ️ How to Use", expanded=True):
     st.markdown("""
