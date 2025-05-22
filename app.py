@@ -59,6 +59,11 @@ if st.button("⚡Calculate + Rank"):
     with st.spinner("Running model..."):
         try:
             raw_output = run_scrape(team1, team2)
+
+            # DEBUG: Show full raw scrape output
+            st.subheader("🧪 Full Raw Output from run_scrape()")
+            st.code(raw_output)
+
             lines = raw_output.split("\n")
             batter_lines = []
             reading = False
@@ -71,7 +76,7 @@ if st.button("⚡Calculate + Rank"):
                 if reading and line.strip():
                     batter_lines.append(line)
 
-            # DEBUG: Show parsed batter lines
+            # DEBUG: Parsed batter lines
             st.subheader("🧪 DEBUG: Parsed Batter Lines")
             st.write(batter_lines)
 
@@ -100,27 +105,27 @@ if st.button("⚡Calculate + Rank"):
                             stat_dict[k.strip()] = None
                 stat_dict["Name"] = parts[0]
 
-                # DEBUG: Show each parsed stat dict
+                # DEBUG: Individual stat dictionaries
                 st.subheader(f"🧪 Stats for {stat_dict['Name']}")
                 st.write(stat_dict)
 
                 values = [get_stat_value(stat_dict["Name"], stat_dict, s) for s in stat_selections]
 
-                # DEBUG: Show selected values for scoring
+                # DEBUG: Selected stat values used for scoring
                 st.write(f"Selected values: {values}")
 
                 if None not in values:
                     score = sum(w * v for w, v in zip(weight_inputs, values))
                     results.append((stat_dict["Name"], score))
 
-            # DEBUG: Show final results before sorting
+            # DEBUG: Final results before sorting
             st.subheader("🧪 Raw Scoring Results")
             st.write(results)
 
             results.sort(key=lambda x: x[1], reverse=True)
             df = pd.DataFrame(results, columns=["Player", "Score"])
 
-            # DEBUG: Final DataFrame
+            # DEBUG: Final DataFrame before display
             st.subheader("📊 Final Ranked Hitters DataFrame")
             st.write(df)
 
