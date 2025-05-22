@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 from scrape_stats import run_scrape
@@ -72,6 +71,10 @@ if st.button("⚡Calculate + Rank"):
                 if reading and line.strip():
                     batter_lines.append(line)
 
+            # DEBUG: Show parsed batter lines
+            st.subheader("🧪 DEBUG: Parsed Batter Lines")
+            st.write(batter_lines)
+
             handedness_df = pd.read_csv("handedness.csv")
             handedness_dict = dict(zip(handedness_df["Name"].str.lower().str.strip(), handedness_df["Side"]))
 
@@ -96,13 +99,31 @@ if st.button("⚡Calculate + Rank"):
                         except:
                             stat_dict[k.strip()] = None
                 stat_dict["Name"] = parts[0]
+
+                # DEBUG: Show each parsed stat dict
+                st.subheader(f"🧪 Stats for {stat_dict['Name']}")
+                st.write(stat_dict)
+
                 values = [get_stat_value(stat_dict["Name"], stat_dict, s) for s in stat_selections]
+
+                # DEBUG: Show selected values for scoring
+                st.write(f"Selected values: {values}")
+
                 if None not in values:
                     score = sum(w * v for w, v in zip(weight_inputs, values))
                     results.append((stat_dict["Name"], score))
 
+            # DEBUG: Show final results before sorting
+            st.subheader("🧪 Raw Scoring Results")
+            st.write(results)
+
             results.sort(key=lambda x: x[1], reverse=True)
             df = pd.DataFrame(results, columns=["Player", "Score"])
+
+            # DEBUG: Final DataFrame
+            st.subheader("📊 Final Ranked Hitters DataFrame")
+            st.write(df)
+
             st.markdown("### 🏆 Ranked Hitters")
             st.dataframe(df, use_container_width=True)
         except Exception as e:
