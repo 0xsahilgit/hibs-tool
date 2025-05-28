@@ -6,16 +6,15 @@ import requests
 from datetime import datetime
 
 # --- CONFIG ---
-
 st.set_page_config(page_title="Hib's Tool", layout="wide")
 st.title("⚾ Hib's Batter Data Tool")
 
-with st.expander("ℹ️ How to Use", expanded=True):
+with st.expander("ℹ️ How to Use", expanded=False):
     st.markdown("""
     **Welcome to Hib's Tool!**
-    Disclaimer: Only displays full data for games in which lineups are currently out.
+    Disclaimer: Only will display full data for games in which lineups are currently out.
 
-    1. Choose today's game matchup from the dropdown.
+    1. Select a matchup from today's schedule.
     2. Choose how many stats you want to weight (1–4).
     3. Select the stat types and set your weights.
     4. Click **Run Model + Rank** to view the top hitters.
@@ -23,43 +22,38 @@ with st.expander("ℹ️ How to Use", expanded=True):
     Optional: Click **Show All Batter Stats** to see raw data (including `n/a`s).
     """)
 
-# --- HELPER TO GET TODAY'S MATCHUPS ---
+# --- GET TODAY'S MATCHUPS ---
 
-TEAM_NAME_MAP = {
-    "ARI": "Arizona Diamondbacks", "ATL": "Atlanta Braves", "BAL": "Baltimore Orioles",
-    "BOS": "Boston Red Sox", "CHC": "Chicago Cubs", "CHW": "Chicago White Sox",
-    "CIN": "Cincinnati Reds", "CLE": "Cleveland Guardians", "COL": "Colorado Rockies",
-    "DET": "Detroit Tigers", "HOU": "Houston Astros", "KCR": "Kansas City Royals",
-    "LAA": "Los Angeles Angels", "LAD": "Los Angeles Dodgers", "MIA": "Miami Marlins",
-    "MIL": "Milwaukee Brewers", "MIN": "Minnesota Twins", "NYM": "New York Mets",
-    "NYY": "New York Yankees", "OAK": "Oakland Athletics", "PHI": "Philadelphia Phillies",
-    "PIT": "Pittsburgh Pirates", "SDP": "San Diego Padres", "SEA": "Seattle Mariners",
-    "SFG": "San Francisco Giants", "STL": "St. Louis Cardinals", "TBR": "Tampa Bay Rays",
-    "TEX": "Texas Rangers", "TOR": "Toronto Blue Jays", "WSH": "Washington Nationals"
+TEAM_NAME_MAP_REV = {
+    "Arizona Diamondbacks": "ARI", "Atlanta Braves": "ATL", "Baltimore Orioles": "BAL",
+    "Boston Red Sox": "BOS", "Chicago Cubs": "CHC", "Chicago White Sox": "CHW",
+    "Cincinnati Reds": "CIN", "Cleveland Guardians": "CLE", "Colorado Rockies": "COL",
+    "Detroit Tigers": "DET", "Houston Astros": "HOU", "Kansas City Royals": "KCR",
+    "Los Angeles Angels": "LAA", "Los Angeles Dodgers": "LAD", "Miami Marlins": "MIA",
+    "Milwaukee Brewers": "MIL", "Minnesota Twins": "MIN", "New York Mets": "NYM",
+    "New York Yankees": "NYY", "Oakland Athletics": "OAK", "Philadelphia Phillies": "PHI",
+    "Pittsburgh Pirates": "PIT", "San Diego Padres": "SDP", "Seattle Mariners": "SEA",
+    "San Francisco Giants": "SFG", "St. Louis Cardinals": "STL", "Tampa Bay Rays": "TBR",
+    "Texas Rangers": "TEX", "Toronto Blue Jays": "TOR", "Washington Nationals": "WSH"
 }
-
-TEAM_NAME_REVERSE = {v: k for k, v in TEAM_NAME_MAP.items()}
 
 def get_today_matchups():
     today = datetime.now().strftime("%Y-%m-%d")
     url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={today}"
-    data = requests.get(url).json()
+    response = requests.get(url).json()
     matchups = []
-    for date in data.get("dates", []):
+    for date in response.get("dates", []):
         for game in date.get("games", []):
             away = game["teams"]["away"]["team"]["name"]
             home = game["teams"]["home"]["team"]["name"]
-            matchup = f"{away} @ {home}"
-            matchups.append(matchup)
+            if away in TEAM_NAME_MAP_REV and home in TEAM_NAME_MAP_REV:
+                matchups.append(f"{TEAM_NAME_MAP_REV[away]} @ {TEAM_NAME_MAP_REV[home]}")
     return matchups
 
-# --- MATCHUP DROPDOWN ---
-
 matchups = get_today_matchups()
-selected_matchup = st.selectbox("Choose today's game", matchups)
-team1_name, team2_name = [s.strip() for s in selected_matchup.split("@")]
-team1_abbr = TEAM_NAME_REVERSE[team1_name]
-team2_abbr = TEAM_NAME_REVERSE[team2_name]
+selected_matchup = st.selectbox("Select Today's Matchup", matchups if matchups else ["No matchups available"])
+
+team1, team2 = selected_matchup.split(" @ ")
 
 # --- STAT SELECTION ---
 
@@ -73,7 +67,7 @@ weight_defaults = {
     2: [0.5, 0.5],
     3: [0.33, 0.33, 0.34],
     4: [0.25, 0.25, 0.25, 0.25]
-}[num_stats]
+}.get(num_stats, [1.0])
 
 stat_selections = []
 weight_inputs = []
@@ -81,7 +75,7 @@ weight_inputs = []
 for i in range(num_stats):
     cols = st.columns([2, 1])
     default_stat = available_stats[i % len(available_stats)]
-    stat = cols[0].selectbox(f"Stat {i+1}", available_stats, key=f"stat_{i}", index=i % len(available_stats))
+    stat = cols[0].selectbox(f"Stat {i+1}", available_stats, index=available_stats.index(default_stat), key=f"stat_{i}")
     weight = cols[1].number_input(f"Weight {i+1}", min_value=0.0, max_value=1.0, value=weight_defaults[i], step=0.01, key=f"w_{i}")
     stat_selections.append(stat)
     weight_inputs.append(weight)
@@ -91,7 +85,7 @@ for i in range(num_stats):
 if st.button("⚡Calculate + Rank"):
     with st.spinner("Running model..."):
         try:
-            raw_output = run_scrape(team1_abbr, team2_abbr)
+            raw_output = run_scrape(team1, team2)
             lines = raw_output.split("\n")
             batter_lines = []
             reading = False
@@ -144,7 +138,7 @@ if st.button("⚡Calculate + Rank"):
 
 if st.button("📋 Show All Batter Stats"):
     try:
-        raw_output = run_scrape(team1_abbr, team2_abbr)
+        raw_output = run_scrape(team1, team2)
         batter_lines = []
         lines = raw_output.split("\n")
         reading = False
