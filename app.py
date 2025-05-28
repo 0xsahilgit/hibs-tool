@@ -4,6 +4,7 @@ from scrape_stats import run_scrape
 from get_lineups import get_players_and_pitchers
 import requests
 from datetime import datetime
+import csv
 
 # --- CONFIG ---
 st.set_page_config(page_title="Hib's Tool", layout="wide")
@@ -52,7 +53,6 @@ def get_today_matchups():
 
 matchups = get_today_matchups()
 selected_matchup = st.selectbox("Select Today's Matchup", matchups if matchups else ["No matchups available"])
-
 team1, team2 = selected_matchup.split(" @ ")
 
 # --- STAT SELECTION ---
@@ -81,12 +81,43 @@ for i in range(num_stats):
     weight_inputs.append(weight)
 
 # --- RUN MODEL ---
+def find_pitcher_stats(pitcher_name, files):
+    stats = {}
+    for file in files:
+        with open(file, newline='') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                name_csv = row['last_name, first_name'].replace('"', '').strip().lower()
+                name_input = pitcher_name.strip().lower()
+                if name_input in name_csv or name_csv in name_input:
+                    if "brl_percent" in row:
+                        stats["Barrel %"] = row.get("brl_percent", "n/a")
+                        stats["Hard-Hit %"] = row.get("ev95percent", "n/a")
+                    if "era" in row:
+                        stats["ERA"] = row.get("era", "n/a")
+    return stats
 
 if st.button("⚡Calculate + Rank"):
     with st.spinner("Running model..."):
         try:
             raw_output = run_scrape(team1, team2)
             lines = raw_output.split("\n")
+
+            # Pitchers display
+            st.markdown("### 🧤 Pitcher Stats")
+            if "Pitchers:" in raw_output:
+                pitcher_names = raw_output.split("Pitchers:")[1].strip().split("\n")
+                for p in pitcher_names:
+                    p_name = p.replace("-", "").strip()
+                    if p_name == "TBD":
+                        st.markdown(f"**{p_name}**: No data available")
+                        continue
+                    stats = find_pitcher_stats(p_name, ["exit_pitchers.csv", "expected_pitchers.csv"])
+                    if stats:
+                        st.markdown(f"**{p_name}**: " + " | ".join([f"{k}: {v}" for k, v in stats.items()]))
+                    else:
+                        st.markdown(f"**{p_name}**: No matching data found")
+
             batter_lines = []
             reading = False
             for line in lines:
@@ -133,33 +164,3 @@ if st.button("⚡Calculate + Rank"):
             st.dataframe(df, use_container_width=True)
         except Exception as e:
             st.error(f"Error: {e}")
-
-# --- SHOW RAW BATTER STATS ---
-
-if st.button("📋 Show All Batter Stats"):
-    try:
-        raw_output = run_scrape(team1, team2)
-        batter_lines = []
-        lines = raw_output.split("\n")
-        reading = False
-        for line in lines:
-            if "Batter Stats:" in line:
-                reading = True
-                continue
-            if "Pitcher Stats:" in line:
-                break
-            if reading and line.strip():
-                batter_lines.append(line)
-
-        st.markdown("### 📊 All Batter Stats")
-        for line in batter_lines:
-            parts = [x.strip() for x in line.split("|")]
-            name = parts[0]
-            st.markdown(f"**🔹 {name}**")
-            for p in parts[1:]:
-                if ": " in p:
-                    k, v = p.split(": ")
-                    st.markdown(f"`{k.strip():<12}: {v.strip()}`")
-            st.markdown("---")
-    except Exception as e:
-        st.error(f"Error: {e}")
