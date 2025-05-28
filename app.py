@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import requests
@@ -25,6 +24,20 @@ with st.expander("ℹ️ How to Use", expanded=True):
 
 # --- MATCHUP DROPDOWN ---
 
+TEAM_NAME_MAP = {
+    "ARI": "Arizona Diamondbacks", "ATL": "Atlanta Braves", "BAL": "Baltimore Orioles",
+    "BOS": "Boston Red Sox", "CHC": "Chicago Cubs", "CHW": "Chicago White Sox",
+    "CIN": "Cincinnati Reds", "CLE": "Cleveland Guardians", "COL": "Colorado Rockies",
+    "DET": "Detroit Tigers", "HOU": "Houston Astros", "KCR": "Kansas City Royals",
+    "LAA": "Los Angeles Angels", "LAD": "Los Angeles Dodgers", "MIA": "Miami Marlins",
+    "MIL": "Milwaukee Brewers", "MIN": "Minnesota Twins", "NYM": "New York Mets",
+    "NYY": "New York Yankees", "OAK": "Oakland Athletics", "PHI": "Philadelphia Phillies",
+    "PIT": "Pittsburgh Pirates", "SDP": "San Diego Padres", "SEA": "Seattle Mariners",
+    "SFG": "San Francisco Giants", "STL": "St. Louis Cardinals", "TBR": "Tampa Bay Rays",
+    "TEX": "Texas Rangers", "TOR": "Toronto Blue Jays", "WSH": "Washington Nationals"
+}
+REVERSE_MAP = {v: k for k, v in TEAM_NAME_MAP.items()}
+
 def get_today_matchups():
     today = pd.Timestamp.now().strftime("%Y-%m-%d")
     url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={today}"
@@ -32,14 +45,23 @@ def get_today_matchups():
     matchups = []
     for date in data.get("dates", []):
         for game in date.get("games", []):
-            away = game["teams"]["away"]["team"]["abbreviation"]
-            home = game["teams"]["home"]["team"]["abbreviation"]
-            matchups.append(f"{away} @ {home}")
+            away_name = game["teams"]["away"]["team"]["name"]
+            home_name = game["teams"]["home"]["team"]["name"]
+            if away_name in REVERSE_MAP and home_name in REVERSE_MAP:
+                away_abbr = REVERSE_MAP[away_name]
+                home_abbr = REVERSE_MAP[home_name]
+                matchup_str = f"{away_abbr} @ {home_abbr}"
+                matchups.append((matchup_str, away_abbr, home_abbr))
     return matchups
 
 matchups = get_today_matchups()
-selected_matchup = st.selectbox("Today's Matchups", matchups)
-team1, team2 = [t.strip() for t in selected_matchup.split("@")]
+if not matchups:
+    st.error("No MLB matchups found for today.")
+    st.stop()
+
+matchup_strs = [m[0] for m in matchups]
+selected_matchup = st.selectbox("Select Today's Matchup", matchup_strs)
+team1, team2 = [(a, b) for m, a, b in matchups if m == selected_matchup][0]
 
 # --- STAT SELECTION ---
 
