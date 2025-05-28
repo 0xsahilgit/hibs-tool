@@ -1,5 +1,7 @@
+
 import streamlit as st
 import pandas as pd
+import requests
 from scrape_stats import run_scrape
 from get_lineups import get_players_and_pitchers
 
@@ -13,7 +15,7 @@ with st.expander("ℹ️ How to Use", expanded=True):
     **Welcome to Hib's Tool!**
     Disclaimer: Only will display full data for games in which lineups are currently out.
 
-    1. Enter team abbreviations for both teams in a matchup. (ex. PHI COL)
+    1. Choose a matchup from today's MLB games.
     2. Choose how many stats you want to weight (1–4).
     3. Select the stat types and set your weights.
     4. Click **Run Model + Rank** to view the top hitters.
@@ -21,13 +23,23 @@ with st.expander("ℹ️ How to Use", expanded=True):
     Optional: Click **Show All Batter Stats** to see raw data (including `n/a`s).
     """)
 
-# --- TEAM INPUTS ---
+# --- MATCHUP DROPDOWN ---
 
-col1, col2 = st.columns(2)
-with col1:
-    team1 = st.text_input("Team 1 Abbreviation", value="PHI").strip().upper()
-with col2:
-    team2 = st.text_input("Team 2 Abbreviation", value="COL").strip().upper()
+def get_today_matchups():
+    today = pd.Timestamp.now().strftime("%Y-%m-%d")
+    url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={today}"
+    data = requests.get(url).json()
+    matchups = []
+    for date in data.get("dates", []):
+        for game in date.get("games", []):
+            away = game["teams"]["away"]["team"]["abbreviation"]
+            home = game["teams"]["home"]["team"]["abbreviation"]
+            matchups.append(f"{away} @ {home}")
+    return matchups
+
+matchups = get_today_matchups()
+selected_matchup = st.selectbox("Today's Matchups", matchups)
+team1, team2 = [t.strip() for t in selected_matchup.split("@")]
 
 # --- STAT SELECTION ---
 
@@ -102,7 +114,6 @@ if st.button("⚡Calculate + Rank"):
 
             results.sort(key=lambda x: x[1], reverse=True)
             df = pd.DataFrame(results, columns=["Player", "Score"])
-
             st.markdown("### 🏆 Ranked Hitters")
             st.dataframe(df, use_container_width=True)
         except Exception as e:
@@ -137,4 +148,3 @@ if st.button("📋 Show All Batter Stats"):
             st.markdown("---")
     except Exception as e:
         st.error(f"Error: {e}")
-
