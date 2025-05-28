@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
-import requests
 from scrape_stats import run_scrape
 from get_lineups import get_players_and_pitchers
+import requests
+from datetime import datetime
 
 # --- CONFIG ---
 
@@ -12,9 +13,9 @@ st.title("⚾ Hib's Batter Data Tool")
 with st.expander("ℹ️ How to Use", expanded=True):
     st.markdown("""
     **Welcome to Hib's Tool!**
-    Disclaimer: Only will display full data for games in which lineups are currently out.
+    Disclaimer: Only displays full data for games in which lineups are currently out.
 
-    1. Choose a matchup from today's MLB games.
+    1. Choose today's game matchup from the dropdown.
     2. Choose how many stats you want to weight (1–4).
     3. Select the stat types and set your weights.
     4. Click **Run Model + Rank** to view the top hitters.
@@ -22,7 +23,7 @@ with st.expander("ℹ️ How to Use", expanded=True):
     Optional: Click **Show All Batter Stats** to see raw data (including `n/a`s).
     """)
 
-# --- MATCHUP DROPDOWN ---
+# --- HELPER TO GET TODAY'S MATCHUPS ---
 
 TEAM_NAME_MAP = {
     "ARI": "Arizona Diamondbacks", "ATL": "Atlanta Braves", "BAL": "Baltimore Orioles",
@@ -36,32 +37,29 @@ TEAM_NAME_MAP = {
     "SFG": "San Francisco Giants", "STL": "St. Louis Cardinals", "TBR": "Tampa Bay Rays",
     "TEX": "Texas Rangers", "TOR": "Toronto Blue Jays", "WSH": "Washington Nationals"
 }
-REVERSE_MAP = {v: k for k, v in TEAM_NAME_MAP.items()}
+
+TEAM_NAME_REVERSE = {v: k for k, v in TEAM_NAME_MAP.items()}
 
 def get_today_matchups():
-    today = pd.Timestamp.now().strftime("%Y-%m-%d")
+    today = datetime.now().strftime("%Y-%m-%d")
     url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={today}"
     data = requests.get(url).json()
     matchups = []
     for date in data.get("dates", []):
         for game in date.get("games", []):
-            away_name = game["teams"]["away"]["team"]["name"]
-            home_name = game["teams"]["home"]["team"]["name"]
-            if away_name in REVERSE_MAP and home_name in REVERSE_MAP:
-                away_abbr = REVERSE_MAP[away_name]
-                home_abbr = REVERSE_MAP[home_name]
-                matchup_str = f"{away_abbr} @ {home_abbr}"
-                matchups.append((matchup_str, away_abbr, home_abbr))
+            away = game["teams"]["away"]["team"]["name"]
+            home = game["teams"]["home"]["team"]["name"]
+            matchup = f"{away} @ {home}"
+            matchups.append(matchup)
     return matchups
 
-matchups = get_today_matchups()
-if not matchups:
-    st.error("No MLB matchups found for today.")
-    st.stop()
+# --- MATCHUP DROPDOWN ---
 
-matchup_strs = [m[0] for m in matchups]
-selected_matchup = st.selectbox("Select Today's Matchup", matchup_strs)
-team1, team2 = [(a, b) for m, a, b in matchups if m == selected_matchup][0]
+matchups = get_today_matchups()
+selected_matchup = st.selectbox("Choose today's game", matchups)
+team1_name, team2_name = [s.strip() for s in selected_matchup.split("@")]
+team1_abbr = TEAM_NAME_REVERSE[team1_name]
+team2_abbr = TEAM_NAME_REVERSE[team2_name]
 
 # --- STAT SELECTION ---
 
@@ -75,14 +73,15 @@ weight_defaults = {
     2: [0.5, 0.5],
     3: [0.33, 0.33, 0.34],
     4: [0.25, 0.25, 0.25, 0.25]
-}.get(num_stats, [1.0])
+}[num_stats]
 
 stat_selections = []
 weight_inputs = []
 
 for i in range(num_stats):
     cols = st.columns([2, 1])
-    stat = cols[0].selectbox(f"Stat {i+1}", available_stats, key=f"stat_{i}")
+    default_stat = available_stats[i % len(available_stats)]
+    stat = cols[0].selectbox(f"Stat {i+1}", available_stats, key=f"stat_{i}", index=i % len(available_stats))
     weight = cols[1].number_input(f"Weight {i+1}", min_value=0.0, max_value=1.0, value=weight_defaults[i], step=0.01, key=f"w_{i}")
     stat_selections.append(stat)
     weight_inputs.append(weight)
@@ -92,7 +91,7 @@ for i in range(num_stats):
 if st.button("⚡Calculate + Rank"):
     with st.spinner("Running model..."):
         try:
-            raw_output = run_scrape(team1, team2)
+            raw_output = run_scrape(team1_abbr, team2_abbr)
             lines = raw_output.split("\n")
             batter_lines = []
             reading = False
@@ -145,7 +144,7 @@ if st.button("⚡Calculate + Rank"):
 
 if st.button("📋 Show All Batter Stats"):
     try:
-        raw_output = run_scrape(team1, team2)
+        raw_output = run_scrape(team1_abbr, team2_abbr)
         batter_lines = []
         lines = raw_output.split("\n")
         reading = False
