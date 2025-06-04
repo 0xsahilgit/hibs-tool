@@ -4,8 +4,8 @@ from scrape_stats import run_scrape
 from get_lineups import get_players_and_pitchers
 import requests
 from datetime import datetime
-from pybaseball.statcast import statcast_batter_game_logs
 import time
+from pybaseball import playerid_lookup, statcast_batter_by_game
 
 # --- CONFIG ---
 st.set_page_config(page_title="Hib's Tool", layout="wide")
