@@ -7,7 +7,7 @@ from get_lineups import get_players_and_pitchers
 import time
 
 # --- CONFIG ---
-st.set_page_config(page_title="Hib's Tool", layout="wide")
+st.set_page_config(page_title="Hib's Batter Data Tool", layout="wide")
 st.title("⚾ Hib's Batter Data Tool")
 
 # --- TEAM MAPS ---
@@ -29,11 +29,11 @@ id_map = pd.read_csv("player_id_map.csv")
 
 def lookup_player_id(name):
     try:
-        row = id_map.loc[id_map['name_first'] + ' ' + id_map['name_last'] == name]
+        row = id_map.loc[(id_map['name_first'] + ' ' + id_map['name_last']).str.lower() == name.lower()]
         if not row.empty:
             return int(row['key_mlbam'].values[0])
-    except:
-        pass
+    except Exception as e:
+        return None
     return None
 
 # --- GET TODAY'S MATCHUPS ---
@@ -166,8 +166,8 @@ with tab2:
         with st.spinner("Running 7-day model..."):
             batters, _ = get_players_and_pitchers(team1_7d, team2_7d)
 
-            today = datetime.now().date()
-            seven_days_ago = today - timedelta(days=7)
+            today = datetime.now().strftime('%Y-%m-%d')
+            seven_days_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
 
             all_stats = []
             for name in batters:
@@ -175,13 +175,13 @@ with tab2:
                 if player_id is None:
                     continue
                 try:
-                    data = statcast_batter(player_id, seven_days_ago, today)
+                    data = statcast_batter(seven_days_ago, today, player_id)
                     if data.empty:
                         continue
-                    avg_ev = data['launch_speed'].mean()
-                    barrel_events = data[data['launch_speed'] > 95]  # Simplified barrel proxy
-                    barrel_pct = len(barrel_events) / len(data)
-                    fb_pct = len(data[data['launch_angle'] >= 25]) / len(data)  # fly balls above 25 degree
+                    avg_ev = data['launch_speed'].mean(skipna=True)
+                    barrel_events = data[data['launch_speed'] > 95]  # Rough barrel proxy
+                    barrel_pct = len(barrel_events) / len(data) if len(data) > 0 else 0
+                    fb_pct = len(data[data['launch_angle'] >= 25]) / len(data) if len(data) > 0 else 0
                     all_stats.append((name, avg_ev, barrel_pct, fb_pct))
                 except Exception as e:
                     continue
@@ -191,7 +191,7 @@ with tab2:
             else:
                 results = []
                 for name, ev, barrel, fb in all_stats:
-                    values = [ev, barrel * 100, fb * 100]  # Barrel % and FB % as percentages
+                    values = [ev, barrel * 100, fb * 100]  # Scale barrel and FB % to percentages
                     score = sum(w * v for w, v in zip(weight_inputs_7d, values))
                     results.append((name, score))
 
