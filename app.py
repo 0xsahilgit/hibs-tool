@@ -2,14 +2,15 @@ import streamlit as st
 import pandas as pd
 from scrape_stats import run_scrape
 from get_lineups import get_players_and_pitchers
-from pybaseball import playerid_lookup, statcast_batter_logs
 import requests
 from datetime import datetime, timedelta
+from pybaseball import playerid_lookup, statcast_batter
 
 # --- CONFIG ---
 st.set_page_config(page_title="Hib's Tool", layout="wide")
+st.title("⚾ Hib's Batter Data Tool")
 
-# --- FUNCTIONS ---
+# --- TEAM NAME MAP ---
 TEAM_NAME_MAP_REV = {
     "Arizona Diamondbacks": "ARI", "Atlanta Braves": "ATL", "Baltimore Orioles": "BAL",
     "Boston Red Sox": "BOS", "Chicago Cubs": "CHC", "Chicago White Sox": "CHW",
@@ -44,7 +45,7 @@ def get_batter_stats_7days(name):
         player_id = lookup.iloc[0]['key_mlbam']
         today = datetime.now()
         last_week = today - timedelta(days=7)
-        logs = statcast_batter_logs(player_id, last_week.strftime("%Y-%m-%d"), today.strftime("%Y-%m-%d"))
+        logs = statcast_batter(last_week.strftime("%Y-%m-%d"), today.strftime("%Y-%m-%d"), player_id=player_id)
         if logs.empty:
             return None
         return {
@@ -55,145 +56,127 @@ def get_batter_stats_7days(name):
     except Exception as e:
         return None
 
-# --- MAIN ---
-st.title("⚾ Hib's Batter Data Tool")
+# --- MAIN APP ---
+tab1, tab2 = st.tabs(["Season", "7 Day"])
 
-with st.expander("ℹ️ How to Use", expanded=False):
-    st.markdown("""
-    **Welcome to Hib's Tool!**
-    1. Select a matchup from today's schedule.
-    2. Choose how many stats you want to weight (1–4) [Season Tab].
-    3. Choose 3 fixed stats [7 Day Tab].
-    4. Run model to view the top hitters!
-    """)
-
-tab1, tab2 = st.tabs(["Season Stats", "7 Day Stats"])
-
-# --- TAB 1: Season Stats ---
+# --- SEASON TAB ---
 with tab1:
-    st.header("📅 Season Stats")
+    with st.expander("ℹ️ How to Use", expanded=False):
+        st.markdown("""
+        **Welcome to Hib's Tool!**
+        Disclaimer: Only will display full data for games in which lineups are currently out.
+
+        1. Select a matchup from today's schedule.
+        2. Choose how many stats you want to weight (1–4).
+        3. Select the stat types and set your weights.
+        4. Click **Run Model + Rank** to view the top hitters.
+
+        Optional: Click **Show All Batter Stats** to see raw data (including `n/a`s).
+        """)
 
     matchups = get_today_matchups()
-    selected_matchup = st.selectbox("Select Today's Matchup", matchups if matchups else ["No matchups available"], key="season_matchup")
+    selected_matchup = st.selectbox("Select Today's Matchup", matchups if matchups else ["No matchups available"])
 
-    if matchups:
-        team1, team2 = selected_matchup.split(" @ ")
+    team1, team2 = selected_matchup.split(" @ ")
 
-        st.markdown("### 🎯 Stat Weights")
-        num_stats = st.slider("How many stats do you want to weight?", 1, 4, 2)
+    st.markdown("### 🎯 Stat Weights")
+    num_stats = st.slider("How many stats do you want to weight?", 1, 4, 2)
 
-        available_stats = ["EV", "Barrel %", "xSLG", "FB %", "RightFly", "LeftFly"]
+    available_stats = ["EV", "Barrel %", "xSLG", "FB %", "RightFly", "LeftFly"]
 
-        weight_defaults = {
-            1: [1.0],
-            2: [0.5, 0.5],
-            3: [0.33, 0.33, 0.34],
-            4: [0.25, 0.25, 0.25, 0.25]
-        }.get(num_stats, [1.0])
+    weight_defaults = {
+        1: [1.0],
+        2: [0.5, 0.5],
+        3: [0.33, 0.33, 0.34],
+        4: [0.25, 0.25, 0.25, 0.25]
+    }.get(num_stats, [1.0])
 
-        stat_selections = []
-        weight_inputs = []
+    stat_selections = []
+    weight_inputs = []
 
-        for i in range(num_stats):
-            cols = st.columns([2, 1])
-            default_stat = available_stats[i % len(available_stats)]
-            stat = cols[0].selectbox(f"Stat {i+1}", available_stats, index=available_stats.index(default_stat), key=f"season_stat_{i}")
-            weight = cols[1].number_input(f"Weight {i+1}", min_value=0.0, max_value=1.0, value=weight_defaults[i], step=0.01, key=f"season_w_{i}")
-            stat_selections.append(stat)
-            weight_inputs.append(weight)
+    for i in range(num_stats):
+        cols = st.columns([2, 1])
+        default_stat = available_stats[i % len(available_stats)]
+        stat = cols[0].selectbox(f"Stat {i+1}", available_stats, index=available_stats.index(default_stat), key=f"stat_{i}")
+        weight = cols[1].number_input(f"Weight {i+1}", min_value=0.0, max_value=1.0, value=weight_defaults[i], step=0.01, key=f"w_{i}")
+        stat_selections.append(stat)
+        weight_inputs.append(weight)
 
-        if st.button("⚡Calculate + Rank", key="season_calc"):
-            with st.spinner("Running model..."):
-                try:
-                    raw_output = run_scrape(team1, team2)
-                    lines = raw_output.split("\n")
-                    batter_lines = []
-                    reading = False
-                    for line in lines:
-                        if "Batter Stats:" in line:
-                            reading = True
-                            continue
-                        if "Pitcher Stats:" in line:
-                            break
-                        if reading and line.strip():
-                            batter_lines.append(line)
+    if st.button("⚡Calculate + Rank", key="season_calc"):
+        with st.spinner("Running model..."):
+            try:
+                raw_output = run_scrape(team1, team2)
+                lines = raw_output.split("\n")
+                batter_lines = []
+                reading = False
+                for line in lines:
+                    if "Batter Stats:" in line:
+                        reading = True
+                        continue
+                    if "Pitcher Stats:" in line:
+                        break
+                    if reading and line.strip():
+                        batter_lines.append(line)
 
-                    handedness_df = pd.read_csv("handedness.csv")
-                    handedness_dict = dict(zip(handedness_df["Name"].str.lower().str.strip(), handedness_df["Side"]))
+                handedness_df = pd.read_csv("handedness.csv")
+                handedness_dict = dict(zip(handedness_df["Name"].str.lower().str.strip(), handedness_df["Side"]))
 
-                    def get_stat_value(name, stats, stat_key):
-                        handed = handedness_dict.get(name.lower().strip(), "R")
-                        if stat_key == "RightFly":
-                            return stats.get("PullAir %") if handed == "R" else stats.get("OppoAir %")
-                        elif stat_key == "LeftFly":
-                            return stats.get("PullAir %") if handed == "L" else stats.get("OppoAir %")
-                        else:
-                            return stats.get(stat_key)
+                def get_stat_value(name, stats, stat_key):
+                    handed = handedness_dict.get(name.lower().strip(), "R")
+                    if stat_key == "RightFly":
+                        return stats.get("PullAir %") if handed == "R" else stats.get("OppoAir %")
+                    elif stat_key == "LeftFly":
+                        return stats.get("PullAir %") if handed == "L" else stats.get("OppoAir %")
+                    else:
+                        return stats.get(stat_key)
 
-                    results = []
-                    for line in batter_lines:
-                        parts = [x.strip() for x in line.split("|")]
-                        stat_dict = {}
-                        for p in parts[1:]:
-                            if ": " in p:
-                                k, v = p.split(": ")
-                                try:
-                                    stat_dict[k.strip()] = float(v)
-                                except:
-                                    stat_dict[k.strip()] = None
-                        stat_dict["Name"] = parts[0]
-                        values = [get_stat_value(stat_dict["Name"], stat_dict, s) for s in stat_selections]
-                        if None not in values:
-                            score = sum(w * v for w, v in zip(weight_inputs, values))
-                            results.append((stat_dict["Name"], score))
+                results = []
+                for line in batter_lines:
+                    parts = [x.strip() for x in line.split("|")]
+                    stat_dict = {}
+                    for p in parts[1:]:
+                        if ": " in p:
+                            k, v = p.split(": ")
+                            try:
+                                stat_dict[k.strip()] = float(v)
+                            except:
+                                stat_dict[k.strip()] = None
+                    stat_dict["Name"] = parts[0]
+                    values = [get_stat_value(stat_dict["Name"], stat_dict, s) for s in stat_selections]
+                    if None not in values:
+                        score = sum(w * v for w, v in zip(weight_inputs, values))
+                        results.append((stat_dict["Name"], score))
 
-                    results.sort(key=lambda x: x[1], reverse=True)
-                    df = pd.DataFrame(results, columns=["Player", "Score"])
-                    st.markdown("### 🏆 Ranked Hitters (Season)")
-                    st.dataframe(df, use_container_width=True)
-                except Exception as e:
-                    st.error(f"Error: {e}")
+                results.sort(key=lambda x: x[1], reverse=True)
+                df = pd.DataFrame(results, columns=["Player", "Score"])
+                st.markdown("### 🏆 Ranked Hitters")
+                st.dataframe(df, use_container_width=True)
+            except Exception as e:
+                st.error(f"Error: {e}")
 
-# --- TAB 2: 7 Day Stats ---
+# --- 7 DAY TAB ---
 with tab2:
-    st.header("📅 7 Day Stats")
+    st.markdown("### 7 Day Recent Stat Weighting")
+    st.markdown("Weights are fixed for 3 stats: EV, Barrel %, and FB%.")
 
     matchups = get_today_matchups()
-    selected_matchup_7 = st.selectbox("Select Today's Matchup (7 Days)", matchups if matchups else ["No matchups available"], key="week_matchup")
+    selected_matchup_7d = st.selectbox("Select Today's Matchup (7 Day)", matchups if matchups else ["No matchups available"], key="7d_matchup")
+    team1_7d, team2_7d = selected_matchup_7d.split(" @ ")
 
-    if matchups:
-        team1, team2 = selected_matchup_7.split(" @ ")
+    if st.button("⚡Calculate 7 Day + Rank", key="7d_calc"):
+        with st.spinner("Running 7 day model..."):
+            try:
+                batters, _ = get_players_and_pitchers(team1_7d, team2_7d)
+                results = []
+                for batter in batters:
+                    stats = get_batter_stats_7days(batter)
+                    if stats:
+                        score = 0.33 * stats["avg_EV"] + 0.33 * stats["avg_Barrel %"] + 0.34 * stats["avg_FB%"]
+                        results.append((batter, score))
 
-        st.markdown("### 📏 Weights for 7-Day Stats")
-        seven_day_stats = ["avg_EV", "avg_Barrel %", "avg_FB%"]
-        weight_defaults = [0.33, 0.33, 0.34]
-
-        stat_selections_7d = []
-        weight_inputs_7d = []
-
-        for i in range(3):
-            cols = st.columns([2, 1])
-            stat = cols[0].selectbox(f"Stat {i+1}", seven_day_stats, index=i, key=f"seven_stat_{i}")
-            weight = cols[1].number_input(f"Weight {i+1}", min_value=0.0, max_value=1.0, value=weight_defaults[i], step=0.01, key=f"seven_w_{i}")
-            stat_selections_7d.append(stat)
-            weight_inputs_7d.append(weight)
-
-        if st.button("⚡Calculate + Rank (7 Days)", key="seven_calc"):
-            with st.spinner("Fetching 7-day logs..."):
-                try:
-                    batters, _ = get_players_and_pitchers(team1, team2)
-                    results_7d = []
-                    for batter in batters:
-                        stats = get_batter_stats_7days(batter)
-                        if stats:
-                            values = [stats.get(s) for s in stat_selections_7d]
-                            if None not in values:
-                                score = sum(w * v for w, v in zip(weight_inputs_7d, values))
-                                results_7d.append((batter, score))
-
-                    results_7d.sort(key=lambda x: x[1], reverse=True)
-                    df7 = pd.DataFrame(results_7d, columns=["Player", "Score"])
-                    st.markdown("### 🏆 Ranked Hitters (7 Days)")
-                    st.dataframe(df7, use_container_width=True)
-                except Exception as e:
-                    st.error(f"Error: {e}")
+                results.sort(key=lambda x: x[1], reverse=True)
+                df = pd.DataFrame(results, columns=["Player", "Score"])
+                st.markdown("### 🏆 7 Day Ranked Hitters")
+                st.dataframe(df, use_container_width=True)
+            except Exception as e:
+                st.error(f"Error: {e}")
