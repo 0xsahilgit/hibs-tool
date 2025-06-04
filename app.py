@@ -33,6 +33,7 @@ def lookup_player_id(name):
         if not row.empty:
             return int(row['key_mlbam'].values[0])
     except Exception as e:
+        st.write(f"Error during lookup for {name}: {e}")  # DEBUG
         return None
     return None
 
@@ -172,10 +173,12 @@ with tab2:
             all_stats = []
             for name in batters:
                 player_id = lookup_player_id(name)
+                st.write(f"Looking up {name} → ID: {player_id}")  # DEBUG
                 if player_id is None:
                     continue
                 try:
                     data = statcast_batter(seven_days_ago, today, player_id)
+                    st.write(f"Data for {name}: {len(data)} rows")  # DEBUG
                     if data.empty:
                         continue
                     avg_ev = data['launch_speed'].mean(skipna=True)
@@ -184,6 +187,7 @@ with tab2:
                     fb_pct = len(data[data['launch_angle'] >= 25]) / len(data) if len(data) > 0 else 0
                     all_stats.append((name, avg_ev, barrel_pct, fb_pct))
                 except Exception as e:
+                    st.write(f"Error fetching data for {name}: {e}")  # DEBUG
                     continue
 
             if not all_stats:
