@@ -29,12 +29,16 @@ id_map = pd.read_csv("player_id_map.csv")
 
 def lookup_player_id(name):
     try:
-        row = id_map.loc[(id_map['name_first'] + ' ' + id_map['name_last']).str.lower() == name.lower()]
+        # Try matching by full PLAYERNAME first
+        row = id_map.loc[id_map['PLAYERNAME'].str.lower() == name.lower()]
         if not row.empty:
-            return int(row['key_mlbam'].values[0])
+            return int(row['MLBID'].values[0])
+        # Fallback to FIRSTNAME + LASTNAME
+        row = id_map.loc[(id_map['FIRSTNAME'].str.strip() + ' ' + id_map['LASTNAME'].str.strip()).str.lower() == name.lower()]
+        if not row.empty:
+            return int(row['MLBID'].values[0])
     except Exception as e:
         st.write(f"Error during lookup for {name}: {e}")  # DEBUG
-        return None
     return None
 
 # --- GET TODAY'S MATCHUPS ---
