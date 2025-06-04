@@ -29,16 +29,14 @@ id_map = pd.read_csv("player_id_map.csv")
 
 def lookup_player_id(name):
     try:
-        # Try matching by full PLAYERNAME first
         row = id_map.loc[id_map['PLAYERNAME'].str.lower() == name.lower()]
         if not row.empty:
             return int(row['MLBID'].values[0])
-        # Fallback to FIRSTNAME + LASTNAME
         row = id_map.loc[(id_map['FIRSTNAME'].str.strip() + ' ' + id_map['LASTNAME'].str.strip()).str.lower() == name.lower()]
         if not row.empty:
             return int(row['MLBID'].values[0])
-    except Exception as e:
-        st.write(f"Error during lookup for {name}: {e}")  # DEBUG
+    except:
+        return None
     return None
 
 # --- GET TODAY'S MATCHUPS ---
@@ -87,15 +85,15 @@ with tab1:
     weight_inputs = []
 
     for i in range(num_stats):
-        cols = st.columns([2, 1])
+        col1, col2 = st.columns(2)  # Equal width columns
         default_stat = available_stats[i % len(available_stats)]
-        stat = cols[0].selectbox(f"Stat {i+1}", available_stats, index=available_stats.index(default_stat), key=f"stat_{i}")
-        weight = cols[1].number_input(f"Weight {i+1}", min_value=0.0, max_value=1.0, value=weight_defaults[i], step=0.01, key=f"w_{i}")
+        stat = col1.selectbox(f"Stat {i+1}", available_stats, index=available_stats.index(default_stat), key=f"stat_{i}")
+        weight = col2.number_input(f"Weight {i+1}", min_value=0.0, max_value=1.0, value=weight_defaults[i], step=0.01, key=f"w_{i}")
         stat_selections.append(stat)
         weight_inputs.append(weight)
 
-    if st.button("⚡Calculate + Rank (Season Stats)"):
-        with st.spinner("Running season model..."):
+    if st.button("⚡ Run Model + Rank (Season Stats)"):
+        with st.spinner("🧮 Crunching season stats... please wait!"):
             from scrape_stats import run_scrape
             raw_output = run_scrape(team1, team2)
             lines = raw_output.split("\n")
@@ -162,13 +160,13 @@ with tab2:
     st.markdown("### 🎯 7-Day Stat Weights")
     weight_inputs_7d = []
     for i, stat in enumerate(available_7d_stats):
-        cols = st.columns([2, 1])
-        cols[0].markdown(f"**{stat}**")
-        weight = cols[1].number_input(f"Weight {stat}", min_value=0.0, max_value=1.0, value=default_weights_7d[i], step=0.01, key=f"7d_weight_{i}")
+        col1, col2 = st.columns(2)  # Equal width columns
+        col1.markdown(f"**{stat}**")
+        weight = col2.number_input(f"Weight {stat}", min_value=0.0, max_value=1.0, value=default_weights_7d[i], step=0.01, key=f"7d_weight_{i}")
         weight_inputs_7d.append(weight)
 
-    if st.button("⚡Calculate + Rank (7-Day Stats)"):
-        with st.spinner("Running 7-day model..."):
+    if st.button("⚡ Run Model + Rank (7-Day Stats)"):
+        with st.spinner("📈 Fetching 7-day player data... please wait!"):
             batters, _ = get_players_and_pitchers(team1_7d, team2_7d)
 
             today = datetime.now().strftime('%Y-%m-%d')
@@ -177,12 +175,10 @@ with tab2:
             all_stats = []
             for name in batters:
                 player_id = lookup_player_id(name)
-                st.write(f"Looking up {name} → ID: {player_id}")  # DEBUG
                 if player_id is None:
                     continue
                 try:
                     data = statcast_batter(seven_days_ago, today, player_id)
-                    st.write(f"Data for {name}: {len(data)} rows")  # DEBUG
                     if data.empty:
                         continue
                     avg_ev = data['launch_speed'].mean(skipna=True)
@@ -190,8 +186,7 @@ with tab2:
                     barrel_pct = len(barrel_events) / len(data) if len(data) > 0 else 0
                     fb_pct = len(data[data['launch_angle'] >= 25]) / len(data) if len(data) > 0 else 0
                     all_stats.append((name, avg_ev, barrel_pct, fb_pct))
-                except Exception as e:
-                    st.write(f"Error fetching data for {name}: {e}")  # DEBUG
+                except:
                     continue
 
             if not all_stats:
