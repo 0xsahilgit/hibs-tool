@@ -4,7 +4,7 @@ from scrape_stats import run_scrape
 from get_lineups import get_players_and_pitchers
 import requests
 from datetime import datetime
-from pybaseball import statcast_batter_game_logs
+from pybaseball.statcast import statcast_batter_game_logs
 import time
 
 # --- CONFIG ---
