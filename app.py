@@ -2,25 +2,29 @@ import streamlit as st
 import pandas as pd
 from scrape_stats import run_scrape
 from get_lineups import get_players_and_pitchers
-from pybaseball import playerid_lookup, statcast_batter
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
+from pybaseball import statcast_batter_logs
 import time
 
 # --- CONFIG ---
 st.set_page_config(page_title="Hib's Tool", layout="wide")
 st.title("⚾ Hib's Batter Data Tool")
 
-with st.expander("ℹ️ How to Use", expanded=False):
-    st.markdown("""
-    **Welcome to Hib's Tool!**
-    Disclaimer: Only will display full data for games in which lineups are currently out.
+# --- Load Player ID Map ---
+@st.cache_data
+def load_id_map():
+    id_map = pd.read_csv("player_id_map.csv")
+    id_map["full_name"] = id_map["name_first"] + " " + id_map["name_last"]
+    return id_map[["full_name", "mlbam_id"]]
 
-    1. Select a matchup from today's schedule.
-    2. Choose how many stats you want to weight.
-    3. Select the stat types and set your weights.
-    4. Click **Run Model + Rank** to view the top hitters.
-    """)
+id_map_df = load_id_map()
+
+def get_batter_id(player_name):
+    result = id_map_df[id_map_df["full_name"].str.lower() == player_name.lower()]
+    if not result.empty:
+        return int(result["mlbam_id"].values[0])
+    return None
 
 # --- GET TODAY'S MATCHUPS ---
 TEAM_NAME_MAP_REV = {
@@ -49,13 +53,24 @@ def get_today_matchups():
                 matchups.append(f"{TEAM_NAME_MAP_REV[away]} @ {TEAM_NAME_MAP_REV[home]}")
     return matchups
 
-matchups = get_today_matchups()
+# --- GUI TABS ---
+tab1, tab2 = st.tabs(["Full Season Stats", "7-Day Stats"])
 
-# --- TABS ---
-tab1, tab2 = st.tabs(["Season Stats", "7 Day Stats"])
-
-# ------------------- TAB 1: Season Stats -------------------
 with tab1:
+    with st.expander("ℹ️ How to Use", expanded=False):
+        st.markdown("""
+        **Welcome to Hib's Tool!**
+        Disclaimer: Only will display full data for games in which lineups are currently out.
+
+        1. Select a matchup from today's schedule.
+        2. Choose how many stats you want to weight (1–4).
+        3. Select the stat types and set your weights.
+        4. Click **Run Model + Rank** to view the top hitters.
+
+        Optional: Click **Show All Batter Stats** to see raw data (including `n/a`s).
+        """)
+
+    matchups = get_today_matchups()
     selected_matchup = st.selectbox("Select Today's Matchup", matchups if matchups else ["No matchups available"])
     team1, team2 = selected_matchup.split(" @ ")
 
@@ -82,7 +97,7 @@ with tab1:
         stat_selections.append(stat)
         weight_inputs.append(weight)
 
-    if st.button("⚡Calculate + Rank", key="calc_season"):
+    if st.button("⚡Calculate + Rank", key="season_rank"):
         with st.spinner("Running model..."):
             try:
                 raw_output = run_scrape(team1, team2)
@@ -134,66 +149,65 @@ with tab1:
             except Exception as e:
                 st.error(f"Error: {e}")
 
-# ------------------- TAB 2: 7 Day Stats -------------------
 with tab2:
-    selected_matchup_7day = st.selectbox("Select Today's Matchup (7 Day Tab)", matchups if matchups else ["No matchups available"], key="7day_matchup")
-    team1_7day, team2_7day = selected_matchup_7day.split(" @ ")
+    with st.expander("ℹ️ 7-Day Stats Use", expanded=False):
+        st.markdown("""
+        This section analyzes the past 7 days of performance.
 
-    st.markdown("### 🎯 7 Day Stat Weights")
-    available_7day_stats = ["avg_EV", "avg_Barrel %", "avg_FB%"]
-    weight_7day_defaults = [0.33, 0.33, 0.34]
+        1. Select a matchup.
+        2. Set weights for EV, Barrel %, and xSLG.
+        3. Click **Run 7-Day Model** to generate results.
+        """)
 
-    stat_selections_7day = []
-    weight_inputs_7day = []
+    matchups = get_today_matchups()
+    selected_matchup_7d = st.selectbox("Select Today's Matchup (7-Day Tab)", matchups if matchups else ["No matchups available"], key="7d_matchup")
+    team1_7d, team2_7d = selected_matchup_7d.split(" @ ")
 
-    for i, stat in enumerate(available_7day_stats):
-        cols = st.columns([2, 1])
-        stat_selections_7day.append(stat)
-        weight = cols[1].number_input(f"Weight {i+1}", min_value=0.0, max_value=1.0, value=weight_7day_defaults[i], step=0.01, key=f"w7_{i}")
-        weight_inputs_7day.append(weight)
+    st.markdown("### 🎯 7-Day Stat Weights")
+    stats_7d = ["EV", "Barrel %", "xSLG"]
 
-    def get_batter_stats_7days(name):
-        try:
-            st.write(f"Looking up {name}...")
-            lookup = playerid_lookup(last=name.split()[-1], first=" ".join(name.split()[:-1]))
-            if lookup.empty:
-                st.write(f"Lookup failed for {name}")
-                return None
-            player_id = lookup.iloc[0]['key_mlbam']
-            today = datetime.now()
-            last_week = today - timedelta(days=7)
-            logs = statcast_batter(last_week.strftime("%Y-%m-%d"), today.strftime("%Y-%m-%d"), player_id=player_id)
-            if logs.empty:
-                st.write(f"No logs found for {name}")
-                return None
-            return {
-                "avg_EV": logs["launch_speed"].mean(),
-                "avg_Barrel %": (logs["barrel"].sum() / logs.shape[0]) * 100,
-                "avg_FB%": (logs["launch_angle"].gt(25).sum() / logs.shape[0]) * 100
-            }
-        except Exception as e:
-            st.write(f"Error for {name}: {e}")
-            return None
+    stat_weights = []
+    for stat in stats_7d:
+        weight = st.number_input(f"Weight for {stat}", min_value=0.0, max_value=1.0, value=round(1/3, 2), step=0.01, key=f"weight_{stat}")
+        stat_weights.append(weight)
 
-    if st.button("⚡Calculate + Rank", key="calc_7day"):
-        with st.spinner("Running 7 Day model..."):
+    if st.button("⚡ Run 7-Day Model", key="seven_day_rank"):
+        with st.spinner("Running 7-Day model..."):
             try:
-                batters, _ = get_players_and_pitchers(team1_7day, team2_7day)
-                results = []
-                for batter in batters:
-                    stats = get_batter_stats_7days(batter)
-                    if stats:
-                        values = [stats.get(stat) for stat in stat_selections_7day]
-                        if None not in values:
-                            score = sum(w * v for w, v in zip(weight_inputs_7day, values))
-                            results.append((batter, score))
-
-                if results:
-                    results.sort(key=lambda x: x[1], reverse=True)
-                    df7 = pd.DataFrame(results, columns=["Player", "Score"])
-                    st.markdown("### 🏆 7 Day Ranked Hitters")
-                    st.dataframe(df7, use_container_width=True)
+                batters, _ = get_players_and_pitchers(team1_7d, team2_7d)
+                if not batters:
+                    st.warning("No lineups available yet for this game.")
                 else:
-                    st.warning("No data found for selected players.")
+                    today = datetime.now().date()
+                    week_ago = today - pd.Timedelta(days=7)
+
+                    player_ids = []
+                    for player in batters:
+                        pid = get_batter_id(player)
+                        player_ids.append((player, pid))
+                        st.write(f"Looked up ID for {player}: {pid}")
+
+                    results = []
+                    for name, pid in player_ids:
+                        if pid is None:
+                            continue
+                        try:
+                            logs = statcast_batter_logs(week_ago, today, player_id=pid)
+                            if not logs.empty:
+                                ev = logs['launch_speed'].dropna().mean()
+                                barrel = (logs['launch_speed'] >= 95).mean()
+                                xslg = logs['estimated_slg'].dropna().mean()
+                                score = stat_weights[0]*ev + stat_weights[1]*barrel + stat_weights[2]*xslg
+                                results.append((name, score))
+                        except Exception as e:
+                            st.write(f"Error fetching data for {name}: {e}")
+
+                    if results:
+                        results.sort(key=lambda x: x[1], reverse=True)
+                        df = pd.DataFrame(results, columns=["Player", "Score"])
+                        st.markdown("### 🏆 7-Day Ranked Hitters")
+                        st.dataframe(df, use_container_width=True)
+                    else:
+                        st.warning("No data found for selected players.")
             except Exception as e:
                 st.error(f"Error: {e}")
