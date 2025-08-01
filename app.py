@@ -18,16 +18,15 @@ TEAM_NAME_MAP_REV = {
     "Detroit Tigers": "DET", "Houston Astros": "HOU", "Kansas City Royals": "KCR",
     "Los Angeles Angels": "LAA", "Los Angeles Dodgers": "LAD", "Miami Marlins": "MIA",
     "Milwaukee Brewers": "MIL", "Minnesota Twins": "MIN", "New York Mets": "NYM",
-    "New York Yankees": "NYY", "Oakland Athletics": "OAK", "Philadelphia Phillies": "PHI",
-    "Pittsburgh Pirates": "PIT", "San Diego Padres": "SDP", "Seattle Mariners": "SEA",
-    "San Francisco Giants": "SFG", "St. Louis Cardinals": "STL", "Tampa Bay Rays": "TBR",
-    "Texas Rangers": "TEX", "Toronto Blue Jays": "TOR", "Washington Nationals": "WSH"
+    "New York Yankees": "NYY", "Oakland Athletics": "OAK", "Athletics": "OAK",
+    "Philadelphia Phillies": "PHI", "Pittsburgh Pirates": "PIT", "San Diego Padres": "SDP",
+    "Seattle Mariners": "SEA", "San Francisco Giants": "SFG", "St. Louis Cardinals": "STL",
+    "Tampa Bay Rays": "TBR", "Texas Rangers": "TEX", "Toronto Blue Jays": "TOR",
+    "Washington Nationals": "WSH"
 }
 
 # --- LOAD PLAYER ID MAP ---
 id_map = pd.read_csv("player_id_map.csv")
-handedness_df = pd.read_csv("handedness.csv")
-handedness_dict = dict(zip(handedness_df["Name"].str.lower().str.strip(), handedness_df["Side"]))
 
 def lookup_player_id(name):
     try:
@@ -41,6 +40,7 @@ def lookup_player_id(name):
         return None
     return None
 
+# --- GET TODAY'S MATCHUPS ---
 def get_today_matchups():
     today = datetime.now().strftime("%Y-%m-%d")
     url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={today}"
@@ -74,9 +74,17 @@ with tab1:
     num_stats = st.slider("How many stats do you want to weight?", 1, 4, 2)
 
     available_stats = ["EV", "Barrel %", "xSLG", "FB %", "RightFly", "LeftFly"]
-    weight_defaults = {1: [1.0], 2: [0.5, 0.5], 3: [0.33, 0.33, 0.34], 4: [0.25, 0.25, 0.25, 0.25]}.get(num_stats, [1.0])
 
-    stat_selections, weight_inputs = [], []
+    weight_defaults = {
+        1: [1.0],
+        2: [0.5, 0.5],
+        3: [0.33, 0.33, 0.34],
+        4: [0.25, 0.25, 0.25, 0.25]
+    }.get(num_stats, [1.0])
+
+    stat_selections = []
+    weight_inputs = []
+
     for i in range(num_stats):
         col1, col2 = st.columns(2)
         default_stat = available_stats[i % len(available_stats)]
@@ -100,6 +108,9 @@ with tab1:
                     break
                 if reading and line.strip():
                     batter_lines.append(line)
+
+            handedness_df = pd.read_csv("handedness.csv")
+            handedness_dict = dict(zip(handedness_df["Name"].str.lower().str.strip(), handedness_df["Side"]))
 
             def get_stat_value(name, stats, stat_key):
                 handed = handedness_dict.get(name.lower().strip(), "R")
@@ -125,8 +136,7 @@ with tab1:
                 values = [get_stat_value(stat_dict["Name"], stat_dict, s) for s in stat_selections]
                 if None not in values:
                     score = sum(w * v for w, v in zip(weight_inputs, values))
-                    handed = handedness_dict.get(stat_dict["Name"].lower().strip(), "R")
-                    results.append((f"{stat_dict['Name']} ({handed})", score))
+                    results.append((stat_dict["Name"], score))
 
             results.sort(key=lambda x: x[1], reverse=True)
             df = pd.DataFrame(results, columns=["Player", "Score"])
@@ -163,6 +173,9 @@ with tab2:
             today = datetime.now().strftime('%Y-%m-%d')
             eleven_days_ago = (datetime.now() - timedelta(days=11)).strftime('%Y-%m-%d')
 
+            handedness_df = pd.read_csv("handedness.csv")
+            handedness_dict = dict(zip(handedness_df["Name"].str.lower().str.strip(), handedness_df["Side"]))
+
             all_stats = []
             for name in batters:
                 player_id = lookup_player_id(name)
@@ -176,7 +189,9 @@ with tab2:
                     barrel_events = data[data['launch_speed'] > 95]
                     barrel_pct = len(barrel_events) / len(data) if len(data) > 0 else 0
                     fb_pct = len(data[data['launch_angle'] >= 25]) / len(data) if len(data) > 0 else 0
-                    all_stats.append((name, avg_ev, barrel_pct, fb_pct))
+                    side = handedness_dict.get(name.lower().strip(), "")
+                    label = f"{name} ({side})" if side else name
+                    all_stats.append((label, avg_ev, barrel_pct, fb_pct))
                 except:
                     continue
 
@@ -187,8 +202,7 @@ with tab2:
                 for name, ev, barrel, fb in all_stats:
                     values = [ev, barrel * 100, fb * 100]
                     score = sum(w * v for w, v in zip(weight_inputs_7d, values))
-                    handed = handedness_dict.get(name.lower().strip(), "R")
-                    results.append((f"{name} ({handed})", score))
+                    results.append((name, score))
 
                 results.sort(key=lambda x: x[1], reverse=True)
                 df_7d = pd.DataFrame(results, columns=["Player", "Score"])
