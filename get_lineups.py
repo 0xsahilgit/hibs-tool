@@ -14,7 +14,16 @@ TEAM_NAME_MAP = {
     "TEX": "Texas Rangers", "TOR": "Toronto Blue Jays", "WSH": "Washington Nationals"
 }
 
+# Allow aliases like "Athletics" → "OAK"
+TEAM_NAME_ALIASES = {
+    "Athletics": "OAK"
+}
+
 def get_players_and_pitchers(team1_abbr, team2_abbr):
+    # Handle any alternate inputs
+    team1_abbr = TEAM_NAME_ALIASES.get(team1_abbr, team1_abbr)
+    team2_abbr = TEAM_NAME_ALIASES.get(team2_abbr, team2_abbr)
+
     today = datetime.now().strftime("%Y-%m-%d")
     schedule_url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={today}"
     schedule = requests.get(schedule_url).json()
@@ -46,7 +55,6 @@ def get_players_and_pitchers(team1_abbr, team2_abbr):
                     sorted_names = [name for _, name in sorted(lineup)]
                     batters.extend(sorted_names)
 
-                # Fallback to game-level probable pitcher data
                 away_pitcher = game["teams"]["away"].get("probablePitcher", {}).get("fullName", "TBD")
                 home_pitcher = game["teams"]["home"].get("probablePitcher", {}).get("fullName", "TBD")
 
@@ -57,7 +65,7 @@ def get_players_and_pitchers(team1_abbr, team2_abbr):
 if __name__ == "__main__":
     import sys
     if len(sys.argv) != 3:
-        print("Usage: python3 get_lineups2.py TEAM1 TEAM2")
+        print("Usage: python3 get_lineups.py TEAM1 TEAM2")
     else:
         batters, pitchers = get_players_and_pitchers(sys.argv[1], sys.argv[2])
         print("Batters:")
@@ -66,4 +74,3 @@ if __name__ == "__main__":
         print("\nPitchers:")
         for p in pitchers:
             print("-", p)
-
