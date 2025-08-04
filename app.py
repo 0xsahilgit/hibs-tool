@@ -4,6 +4,7 @@ import requests
 from datetime import datetime, timedelta
 from pybaseball import statcast_batter
 from get_lineups import get_players_and_pitchers
+from bs4 import BeautifulSoup
 import time
 
 # --- CONFIG ---
@@ -55,8 +56,9 @@ def get_today_matchups():
     return matchups
 
 # --- UI ---
-tab1, tab2 = st.tabs(["Season Stats", "11-Day Stats"])
+tab1, tab2, tab3 = st.tabs(["Season Stats", "11-Day Stats", "Weather"])
 
+# --- SEASON TAB ---
 with tab1:
     with st.expander("ℹ️ How to Use", expanded=False):
         st.markdown("""
@@ -74,22 +76,17 @@ with tab1:
     num_stats = st.slider("How many stats do you want to weight?", 1, 4, 2)
 
     available_stats = ["EV", "Barrel %", "xSLG", "FB %", "RightFly", "LeftFly"]
-
     weight_defaults = {
-        1: [1.0],
-        2: [0.5, 0.5],
-        3: [0.33, 0.33, 0.34],
-        4: [0.25, 0.25, 0.25, 0.25]
+        1: [1.0], 2: [0.5, 0.5], 3: [0.33, 0.33, 0.34], 4: [0.25, 0.25, 0.25, 0.25]
     }.get(num_stats, [1.0])
 
     stat_selections = []
     weight_inputs = []
-
     for i in range(num_stats):
         col1, col2 = st.columns(2)
         default_stat = available_stats[i % len(available_stats)]
         stat = col1.selectbox(f"Stat {i+1}", available_stats, index=available_stats.index(default_stat), key=f"stat_{i}")
-        weight = col2.number_input(f"Weight {i+1}", min_value=0.0, max_value=1.0, value=weight_defaults[i], step=0.01, key=f"w_{i}")
+        weight = col2.number_input(f"Weight {i+1}", 0.0, 1.0, weight_defaults[i], step=0.01, key=f"w_{i}")
         stat_selections.append(stat)
         weight_inputs.append(weight)
 
@@ -143,6 +140,7 @@ with tab1:
             st.markdown("### 🏆 Ranked Hitters (Season)")
             st.dataframe(df, use_container_width=True)
 
+# --- 11-DAY TAB ---
 with tab2:
     with st.expander("ℹ️ 11-Day Stats How to Use", expanded=False):
         st.markdown("""
@@ -151,7 +149,6 @@ with tab2:
         3. Only 3 stat fields: EV, Barrel %, FB %.
         """)
 
-    matchups = get_today_matchups()
     selected_matchup_7d = st.selectbox("Select Today's Matchup (11-Day)", matchups if matchups else ["No matchups available"], key="7d_matchup")
     team1_7d, team2_7d = selected_matchup_7d.split(" @ ")
 
@@ -163,7 +160,7 @@ with tab2:
     for i, stat in enumerate(available_7d_stats):
         col1, col2 = st.columns(2)
         col1.markdown(f"**{stat}**")
-        weight = col2.number_input(f"Weight {stat}", min_value=0.0, max_value=1.0, value=default_weights_7d[i], step=0.01, key=f"7d_weight_{i}")
+        weight = col2.number_input(f"Weight {stat}", 0.0, 1.0, default_weights_7d[i], step=0.01, key=f"7d_weight_{i}")
         weight_inputs_7d.append(weight)
 
     if st.button("⚡ Run Model + Rank (11-Day Stats)"):
@@ -208,3 +205,45 @@ with tab2:
                 df_7d = pd.DataFrame(results, columns=["Player", "Score"])
                 st.markdown("### 🏆 Ranked Hitters (11-Day)")
                 st.dataframe(df_7d, use_container_width=True)
+
+# --- WEATHER TAB ---
+with tab3:
+    st.markdown("### 🌬️ Weather Conditions (via RotoGrinders)")
+    selected_weather_game = st.selectbox("Select Today's Matchup (Weather)", matchups if matchups else ["No matchups available"], key="weather_matchup")
+
+    if selected_weather_game and selected_weather_game != "No matchups available":
+        try:
+            rg_url = "https://rotogrinders.com/weather/mlb"
+            response = requests.get(rg_url)
+            soup = BeautifulSoup(response.text, "html.parser")
+
+            game_blocks = soup.find_all("div", class_="weather-graphic__wrapper")
+            found = False
+            team1, team2 = selected_weather_game.split(" @ ")
+
+            for block in game_blocks:
+                location_div = block.find("div", class_="weather-graphic__location")
+                if location_div:
+                    location_text = location_div.get_text().strip().lower()
+                    if team1.lower() in location_text or team2.lower() in location_text:
+                        arrow_div = block.find("div", class_="weather-graphic__arrow")
+                        speed_div = block.find("div", class_="weather-graphic__speed")
+
+                        if arrow_div and speed_div:
+                            rotation_style = arrow_div.get("style", "")
+                            rotation_value = rotation_style.split("rotate(")[-1].split("deg")[0].strip()
+
+                            st.markdown(f"**Wind Strength:** {speed_div.get_text(strip=True)}**")
+                            st.markdown("**Wind Direction:**")
+                            st.markdown(
+                                f'<div style="display:inline-block; transform: rotate({rotation_value}deg); font-size: 48px;">⬆️</div>',
+                                unsafe_allow_html=True
+                            )
+                            found = True
+                            break
+
+            if not found:
+                st.warning("No wind data found for this matchup on RotoGrinders.")
+
+        except Exception as e:
+            st.error(f"Error fetching weather data: {str(e)}")
