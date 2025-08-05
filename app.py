@@ -181,26 +181,29 @@ with tab2:
             df_7d = pd.DataFrame(results, columns=["Player", "Score"])
             st.dataframe(df_7d, use_container_width=True)
 
-# --- WEATHER TAB (with full location debug) ---
+# --- WEATHER TAB (FINAL FIX: Stadium-based matching) ---
 with tab3:
     st.markdown("### 🌬️ Weather Conditions (via RotoGrinders)")
-    selected_weather_game = st.selectbox("Select Today's Matchup (Weather)", matchups if matchups else ["No matchups available"], key="weather_matchup")
+    selected_weather_game = st.selectbox("Select Today's Matchup (Weather)", get_today_matchups(), key="weather_matchup")
 
-    if selected_weather_game and selected_weather_game != "No matchups available":
-        TEAM_CITY_MAP = {
-            "ARI": "Arizona", "ATL": "Atlanta", "BAL": "Baltimore", "BOS": "Boston",
-            "CHC": "Chicago", "CHW": "Chicago", "CIN": "Cincinnati", "CLE": "Cleveland",
-            "COL": "Colorado", "DET": "Detroit", "HOU": "Houston", "KCR": "Kansas City",
-            "LAA": "Los Angeles", "LAD": "Los Angeles", "MIA": "Miami", "MIL": "Milwaukee",
-            "MIN": "Minnesota", "NYM": "New York", "NYY": "New York", "OAK": "Oakland",
-            "PHI": "Philadelphia", "PIT": "Pittsburgh", "SDP": "San Diego", "SEA": "Seattle",
-            "SFG": "San Francisco", "STL": "St. Louis", "TBR": "Tampa Bay", "TEX": "Texas",
-            "TOR": "Toronto", "WSH": "Washington"
+    if selected_weather_game:
+        STADIUM_KEYWORDS = {
+            "OAK": ["Sutter Health Park"],
+            "WSH": ["Nationals Park"],
+            "PIT": ["PNC Park"],
+            "DET": ["Comerica Park"],
+            "MIA": ["Marlins Park"],
+            "PHI": ["Citizens Bank Park"],
+            "BOS": ["Fenway Park"],
+            "CHC": ["Wrigley Field"],
+            "TEX": ["Globe Life Field"],
+            "COL": ["Coors Field"],
+            "LAD": ["Dodger Stadium"],
+            "LAA": ["Angel Stadium", "Angel Stadium of Anaheim"]
         }
 
         team1, team2 = selected_weather_game.split(" @ ")
-        cities = [TEAM_CITY_MAP.get(team1, ""), TEAM_CITY_MAP.get(team2, "")]
-        st.markdown(f"**🧪 Debug: Matching Cities →** `{cities}`")
+        keywords = STADIUM_KEYWORDS.get(team1, []) + STADIUM_KEYWORDS.get(team2, [])
 
         try:
             url = "https://rotogrinders.com/weather/mlb"
@@ -209,20 +212,18 @@ with tab3:
             blocks = soup.find_all("div", class_="weather-graphic")
 
             found = False
-            for i, block in enumerate(blocks):
+            for block in blocks:
                 location_div = block.find("div", class_="weather-graphic__location")
                 arrow_div = block.find("div", class_="weather-graphic__arrow")
                 speed_div = block.find("div", class_="weather-graphic__speed")
 
                 if location_div:
-                    location_text = location_div.text.strip()
-                    st.markdown(f"**Block {i} Location Text:** `{location_text}`")
+                    location_text = location_div.text.strip().lower()
 
                 if location_div and arrow_div and speed_div:
-                    location_text = location_div.text.strip().lower()
-                    if any(city.lower() in location_text for city in cities):
-                        style = arrow_div.get("style", "")
-                        wind_rotation = style.split("rotate(")[-1].split("deg")[0].strip()
+                    if any(kw.lower() in location_text for kw in keywords):
+                        rotation_style = arrow_div.get("style", "")
+                        wind_rotation = rotation_style.split("rotate(")[-1].split("deg")[0].strip()
                         wind_speed = speed_div.text.strip()
 
                         try:
@@ -246,6 +247,6 @@ with tab3:
                         break
 
             if not found:
-                st.warning("⚠️ No wind data found for this matchup on RotoGrinders.")
+                st.warning("⚠️ No wind data found for this matchup. Try updating STADIUM_KEYWORDS if this persists.")
         except Exception as e:
             st.error(f"Error fetching weather data: {str(e)}")
