@@ -5,7 +5,6 @@ from datetime import datetime, timedelta
 from pybaseball import statcast_batter
 from get_lineups import get_players_and_pitchers
 from bs4 import BeautifulSoup
-import time
 
 # --- CONFIG ---
 st.set_page_config(page_title="Hib's Batter Data Tool", layout="wide")
@@ -16,237 +15,151 @@ TEAM_NAME_MAP_REV = {
     "Arizona Diamondbacks": "ARI", "Atlanta Braves": "ATL", "Baltimore Orioles": "BAL",
     "Boston Red Sox": "BOS", "Chicago Cubs": "CHC", "Chicago White Sox": "CHW",
     "Cincinnati Reds": "CIN", "Cleveland Guardians": "CLE", "Colorado Rockies": "COL",
-    "Detroit Tigers": "DET", "Houston Astros": "HOU", "Kansas City Royals": "KCR",
+    "Detroit Tigers": "DET", "Houston Astros": "HOU", "Kansas City Royals": "KC",
     "Los Angeles Angels": "LAA", "Los Angeles Dodgers": "LAD", "Miami Marlins": "MIA",
     "Milwaukee Brewers": "MIL", "Minnesota Twins": "MIN", "New York Mets": "NYM",
-    "New York Yankees": "NYY", "Oakland Athletics": "OAK", "Athletics": "OAK",
-    "Philadelphia Phillies": "PHI", "Pittsburgh Pirates": "PIT", "San Diego Padres": "SDP",
-    "Seattle Mariners": "SEA", "San Francisco Giants": "SFG", "St. Louis Cardinals": "STL",
-    "Tampa Bay Rays": "TBR", "Texas Rangers": "TEX", "Toronto Blue Jays": "TOR",
-    "Washington Nationals": "WSH"
+    "New York Yankees": "NYY", "Oakland Athletics": "OAK", "Philadelphia Phillies": "PHI",
+    "Pittsburgh Pirates": "PIT", "San Diego Padres": "SD", "San Francisco Giants": "SF",
+    "Seattle Mariners": "SEA", "St. Louis Cardinals": "STL", "Tampa Bay Rays": "TB",
+    "Texas Rangers": "TEX", "Toronto Blue Jays": "TOR", "Washington Nationals": "WSH"
 }
 
-# --- LOAD PLAYER ID MAP ---
-id_map = pd.read_csv("player_id_map.csv")
-
-def lookup_player_id(name):
-    try:
-        row = id_map.loc[id_map['PLAYERNAME'].str.lower() == name.lower()]
-        if not row.empty:
-            return int(row['MLBID'].values[0])
-        row = id_map.loc[(id_map['FIRSTNAME'].str.strip() + ' ' + id_map['LASTNAME'].str.strip()).str.lower() == name.lower()]
-        if not row.empty:
-            return int(row['MLBID'].values[0])
-    except:
-        return None
-    return None
-
-# --- GET TODAY'S MATCHUPS ---
+# --- MATCHUP GETTER ---
 def get_today_matchups():
     today = datetime.now().strftime("%Y-%m-%d")
     url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={today}"
-    response = requests.get(url).json()
+    res = requests.get(url).json()
     matchups = []
-    for date in response.get("dates", []):
+    for date in res.get("dates", []):
         for game in date.get("games", []):
-            away = game["teams"]["away"]["team"]["name"]
-            home = game["teams"]["home"]["team"]["name"]
-            if away in TEAM_NAME_MAP_REV and home in TEAM_NAME_MAP_REV:
-                matchups.append(f"{TEAM_NAME_MAP_REV[away]} @ {TEAM_NAME_MAP_REV[home]}")
-    return matchups
+            teams = game["teams"]
+            away = TEAM_NAME_MAP_REV.get(teams["away"]["team"]["name"])
+            home = TEAM_NAME_MAP_REV.get(teams["home"]["team"]["name"])
+            if away and home:
+                matchups.append(f"{away} @ {home}")
+    return sorted(matchups)
 
-# --- UI ---
-tab1, tab2, tab3 = st.tabs(["Season Stats", "11-Day Stats", "Weather"])
+matchups = get_today_matchups()
 
-# --- SEASON TAB ---
+# --- STADIUM KEYWORDS FOR WEATHER ---
+STADIUM_KEYWORDS = {
+    "ARI": ["Chase Field"],
+    "ATL": ["Truist Park"],
+    "BAL": ["Oriole Park"],
+    "BOS": ["Fenway Park"],
+    "CHC": ["Wrigley Field"],
+    "CHW": ["Guaranteed Rate Field"],
+    "CIN": ["Great American Ball Park"],
+    "CLE": ["Progressive Field"],
+    "COL": ["Coors Field"],
+    "DET": ["Comerica Park"],
+    "HOU": ["Minute Maid Park"],
+    "KC": ["Kauffman Stadium"],
+    "LAA": ["Angel Stadium"],
+    "LAD": ["Dodger Stadium"],
+    "MIA": ["loanDepot park"],
+    "MIL": ["American Family Field"],
+    "MIN": ["Target Field"],
+    "NYM": ["Citi Field"],
+    "NYY": ["Yankee Stadium"],
+    "OAK": ["Oakland Coliseum", "Sutter Health Park"],
+    "PHI": ["Citizens Bank Park"],
+    "PIT": ["PNC Park"],
+    "SD": ["Petco Park"],
+    "SEA": ["T-Mobile Park"],
+    "SF": ["Oracle Park"],
+    "STL": ["Busch Stadium"],
+    "TB": ["Tropicana Field"],
+    "TEX": ["Globe Life Field"],
+    "TOR": ["Rogers Centre"],
+    "WSH": ["Nationals Park"]
+}
+
+# --- APP TABS ---
+tab1, tab2, tab3 = st.tabs(["Season Stats", "11-Day Stats", "🌬️ Weather"])
+
+# --- SEASON STATS TAB ---
 with tab1:
-    matchups = get_today_matchups()
-    selected_matchup = st.selectbox("Select Today's Matchup", matchups if matchups else ["No matchups available"])
-    team1, team2 = selected_matchup.split(" @ ")
-
-    st.markdown("### 🎯 Stat Weights")
-    num_stats = st.slider("How many stats do you want to weight?", 1, 4, 2)
-    available_stats = ["EV", "Barrel %", "xSLG", "FB %", "RightFly", "LeftFly"]
-    default_weights = {1: [1.0], 2: [0.5, 0.5], 3: [0.33, 0.33, 0.34], 4: [0.25, 0.25, 0.25, 0.25]}
-    weight_defaults = default_weights.get(num_stats, [1.0])
-
-    stat_selections = []
-    weight_inputs = []
-    for i in range(num_stats):
-        col1, col2 = st.columns(2)
-        stat = col1.selectbox(f"Stat {i+1}", available_stats, key=f"stat_{i}")
-        weight = col2.number_input(f"Weight {i+1}", 0.0, 1.0, weight_defaults[i], step=0.01, key=f"weight_{i}")
-        stat_selections.append(stat)
-        weight_inputs.append(weight)
-
-    if st.button("⚡ Run Model + Rank (Season Stats)"):
+    st.subheader("Season Stats")
+    selected_matchup = st.selectbox("Select Matchup", matchups, key="season")
+    if st.button("Run Season Model"):
+        players, pitchers = get_players_and_pitchers(selected_matchup)
         from scrape_stats import run_scrape
-        with st.spinner("Running model..."):
-            output = run_scrape(team1, team2)
-            lines = output.splitlines()
-            batter_lines = []
-            reading = False
-            for line in lines:
-                if "Batter Stats:" in line:
-                    reading = True
-                    continue
-                if "Pitcher Stats:" in line:
-                    break
-                if reading and line.strip():
-                    batter_lines.append(line)
-
-            handedness_df = pd.read_csv("handedness.csv")
-            handedness_dict = dict(zip(handedness_df["Name"].str.lower().str.strip(), handedness_df["Side"]))
-
-            def get_stat_value(name, stats, stat_key):
-                handed = handedness_dict.get(name.lower().strip(), "R")
-                if stat_key == "RightFly":
-                    return stats.get("PullAir %") if handed == "R" else stats.get("OppoAir %")
-                elif stat_key == "LeftFly":
-                    return stats.get("PullAir %") if handed == "L" else stats.get("OppoAir %")
-                else:
-                    return stats.get(stat_key)
-
-            results = []
-            for line in batter_lines:
-                parts = [x.strip() for x in line.split("|")]
-                stat_dict = {}
-                for p in parts[1:]:
-                    if ": " in p:
-                        k, v = p.split(": ")
-                        try:
-                            stat_dict[k.strip()] = float(v)
-                        except:
-                            stat_dict[k.strip()] = None
-                stat_dict["Name"] = parts[0]
-                values = [get_stat_value(stat_dict["Name"], stat_dict, s) for s in stat_selections]
-                if None not in values:
-                    score = sum(w * v for w, v in zip(weight_inputs, values))
-                    results.append((stat_dict["Name"], score))
-
-            results.sort(key=lambda x: x[1], reverse=True)
-            df = pd.DataFrame(results, columns=["Player", "Score"])
-            st.dataframe(df, use_container_width=True)
+        df = run_scrape(players, pitchers)
+        st.dataframe(df)
 
 # --- 11-DAY TAB ---
 with tab2:
-    selected_matchup_7d = st.selectbox("Select Matchup (11-Day)", matchups if matchups else ["No matchups available"], key="7d_matchup")
-    team1_7d, team2_7d = selected_matchup_7d.split(" @ ")
-    available_7d_stats = ["EV", "Barrel %", "FB %"]
-    default_weights_7d = [0.33, 0.33, 0.34]
+    st.subheader("11-Day Stats")
+    selected_matchup = st.selectbox("Select Matchup", matchups, key="statcast")
+    if st.button("Get 11-Day Data"):
+        players, _ = get_players_and_pitchers(selected_matchup)
+        end = datetime.today()
+        start = end - timedelta(days=11)
+        statcast_data = []
+        for name in players:
+            try:
+                row = statcast_batter(name, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
+                if not row.empty:
+                    statcast_data.append(row)
+            except Exception:
+                continue
+        if statcast_data:
+            df = pd.concat(statcast_data)
+            st.dataframe(df)
+        else:
+            st.warning("No 11-day statcast data found.")
 
-    st.markdown("### 🎯 11-Day Stat Weights")
-    weight_inputs_7d = []
-    for i, stat in enumerate(available_7d_stats):
-        col1, col2 = st.columns(2)
-        col1.markdown(f"**{stat}**")
-        weight = col2.number_input(f"Weight {stat}", 0.0, 1.0, default_weights_7d[i], step=0.01, key=f"7d_weight_{i}")
-        weight_inputs_7d.append(weight)
-
-    if st.button("⚡ Run Model + Rank (11-Day Stats)"):
-        with st.spinner("Fetching player data..."):
-            batters, _ = get_players_and_pitchers(team1_7d, team2_7d)
-            today = datetime.now().strftime('%Y-%m-%d')
-            eleven_days_ago = (datetime.now() - timedelta(days=11)).strftime('%Y-%m-%d')
-
-            handedness_df = pd.read_csv("handedness.csv")
-            handedness_dict = dict(zip(handedness_df["Name"].str.lower().str.strip(), handedness_df["Side"]))
-
-            all_stats = []
-            for name in batters:
-                player_id = lookup_player_id(name)
-                if player_id is None:
-                    continue
-                try:
-                    data = statcast_batter(eleven_days_ago, today, player_id)
-                    if data.empty:
-                        continue
-                    avg_ev = data['launch_speed'].mean(skipna=True)
-                    barrel_events = data[data['launch_speed'] > 95]
-                    barrel_pct = len(barrel_events) / len(data) if len(data) > 0 else 0
-                    fb_pct = len(data[data['launch_angle'] >= 25]) / len(data) if len(data) > 0 else 0
-                    side = handedness_dict.get(name.lower().strip(), "")
-                    label = f"{name} ({side})" if side else name
-                    all_stats.append((label, avg_ev, barrel_pct, fb_pct))
-                except:
-                    continue
-
-            results = []
-            for name, ev, barrel, fb in all_stats:
-                values = [ev, barrel * 100, fb * 100]
-                score = sum(w * v for w, v in zip(weight_inputs_7d, values))
-                results.append((name, score))
-
-            results.sort(key=lambda x: x[1], reverse=True)
-            df_7d = pd.DataFrame(results, columns=["Player", "Score"])
-            st.dataframe(df_7d, use_container_width=True)
-
-# --- WEATHER TAB (FINAL FIX: Stadium-based matching) ---
+# --- WEATHER TAB ---
 with tab3:
-    st.markdown("### 🌬️ Weather Conditions (via RotoGrinders)")
-    selected_weather_game = st.selectbox("Select Today's Matchup (Weather)", get_today_matchups(), key="weather_matchup")
+    st.subheader("🌬️ Weather Conditions (via RotoGrinders)")
+    selected_matchup = st.selectbox("Select Today's Matchup (Weather)", matchups, key="weather")
 
-    if selected_weather_game:
-        STADIUM_KEYWORDS = {
-            "OAK": ["Sutter Health Park"],
-            "WSH": ["Nationals Park"],
-            "PIT": ["PNC Park"],
-            "DET": ["Comerica Park"],
-            "MIA": ["Marlins Park"],
-            "PHI": ["Citizens Bank Park"],
-            "BOS": ["Fenway Park"],
-            "CHC": ["Wrigley Field"],
-            "TEX": ["Globe Life Field"],
-            "COL": ["Coors Field"],
-            "LAD": ["Dodger Stadium"],
-            "LAA": ["Angel Stadium", "Angel Stadium of Anaheim"]
-        }
+    team1, team2 = selected_matchup.split(" @ ")
+    stadiums = STADIUM_KEYWORDS.get(team1, []) + STADIUM_KEYWORDS.get(team2, [])
+    st.markdown(f"🧪 Debug: Matching Cities → {stadiums}")
 
-        team1, team2 = selected_weather_game.split(" @ ")
-        keywords = STADIUM_KEYWORDS.get(team1, []) + STADIUM_KEYWORDS.get(team2, [])
-
+    def get_weather_data():
         try:
-            url = "https://rotogrinders.com/weather/mlb"
-            response = requests.get(url)
-            soup = BeautifulSoup(response.text, "html.parser")
+            res = requests.get("https://rotogrinders.com/weather/mlb")
+            soup = BeautifulSoup(res.text, "html.parser")
             blocks = soup.find_all("div", class_="weather-graphic")
 
-            found = False
             for block in blocks:
-                location_div = block.find("div", class_="weather-graphic__location")
-                arrow_div = block.find("div", class_="weather-graphic__arrow")
-                speed_div = block.find("div", class_="weather-graphic__speed")
+                loc = block.find("div", class_="weather-graphic__location")
+                arrow = block.find("div", class_="weather-graphic__arrow")
+                speed = block.find("div", class_="weather-graphic__speed")
 
-                if location_div:
-                    location_text = location_div.text.strip().lower()
+                if not loc or not arrow or not speed:
+                    continue
 
-                if location_div and arrow_div and speed_div:
-                    if any(kw.lower() in location_text for kw in keywords):
-                        rotation_style = arrow_div.get("style", "")
-                        wind_rotation = rotation_style.split("rotate(")[-1].split("deg")[0].strip()
-                        wind_speed = speed_div.text.strip()
+                loc_text = loc.text.strip().lower()
+                for keyword in stadiums:
+                    if keyword.lower() in loc_text:
+                        wind_speed = speed.text.strip()
+                        style = arrow.get("style", "")
+                        rotation = None
+                        if "rotate(" in style:
+                            rotation = style.split("rotate(")[-1].split("deg")[0].strip()
 
-                        try:
-                            angle = int(wind_rotation)
-                            if 45 <= angle < 135:
-                                arrow_emoji = "⬇️"
-                            elif 135 <= angle < 225:
-                                arrow_emoji = "⬅️"
-                            elif 225 <= angle < 315:
-                                arrow_emoji = "⬆️"
-                            else:
-                                arrow_emoji = "➡️"
-                        except:
-                            arrow_emoji = "❓"
+                        return {
+                            "stadium": loc.text.strip(),
+                            "wind_speed": wind_speed,
+                            "rotation": rotation
+                        }
+            return None
+        except:
+            return None
 
-                        st.markdown(f"### 💨 Wind Conditions for `{selected_weather_game}`")
-                        st.markdown(f"**Location:** {location_div.text.strip()}")
-                        st.markdown(f"**Wind Speed:** {wind_speed}")
-                        st.markdown(f"**Wind Direction:** {arrow_emoji} ({wind_rotation}°)")
-                        found = True
-                        break
+    weather = get_weather_data()
 
-            if not found:
-                st.warning("⚠️ No wind data found for this matchup. Try updating STADIUM_KEYWORDS if this persists.")
-        except Exception as e:
-            st.error(f"Error fetching weather data: {str(e)}")
+    if weather:
+        st.markdown(f"📍 **Stadium:** {weather['stadium']}")
+        st.markdown(f"💨 **Wind Speed:** {weather['wind_speed']}")
+        if weather['rotation']:
+            deg = float(weather['rotation'])
+            arrows = ["⬆️", "↗️", "➡️", "↘️", "⬇️", "↙️", "⬅️", "↖️"]
+            idx = int(((deg + 22.5) % 360) // 45)
+            st.markdown(f"🧭 **Wind Direction:** {arrows[idx]} ({deg}°)")
+    else:
+        st.warning("⚠️ No wind data found for this matchup. Try updating STADIUM_KEYWORDS if this persists.")
