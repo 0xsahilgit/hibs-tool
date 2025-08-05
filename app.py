@@ -60,16 +60,130 @@ tab1, tab2, tab3 = st.tabs(["Season Stats", "11-Day Stats", "Weather"])
 
 # --- SEASON TAB ---
 with tab1:
-    st.markdown("Season logic here")
+    matchups = get_today_matchups()
+    selected_matchup = st.selectbox("Select Today's Matchup", matchups if matchups else ["No matchups available"])
+    team1, team2 = selected_matchup.split(" @ ")
+
+    st.markdown("### 🎯 Stat Weights")
+    num_stats = st.slider("How many stats do you want to weight?", 1, 4, 2)
+    available_stats = ["EV", "Barrel %", "xSLG", "FB %", "RightFly", "LeftFly"]
+    default_weights = {1: [1.0], 2: [0.5, 0.5], 3: [0.33, 0.33, 0.34], 4: [0.25, 0.25, 0.25, 0.25]}
+    weight_defaults = default_weights.get(num_stats, [1.0])
+
+    stat_selections = []
+    weight_inputs = []
+    for i in range(num_stats):
+        col1, col2 = st.columns(2)
+        stat = col1.selectbox(f"Stat {i+1}", available_stats, key=f"stat_{i}")
+        weight = col2.number_input(f"Weight {i+1}", 0.0, 1.0, weight_defaults[i], step=0.01, key=f"weight_{i}")
+        stat_selections.append(stat)
+        weight_inputs.append(weight)
+
+    if st.button("⚡ Run Model + Rank (Season Stats)"):
+        from scrape_stats import run_scrape
+        with st.spinner("Running model..."):
+            output = run_scrape(team1, team2)
+            lines = output.splitlines()
+            batter_lines = []
+            reading = False
+            for line in lines:
+                if "Batter Stats:" in line:
+                    reading = True
+                    continue
+                if "Pitcher Stats:" in line:
+                    break
+                if reading and line.strip():
+                    batter_lines.append(line)
+
+            handedness_df = pd.read_csv("handedness.csv")
+            handedness_dict = dict(zip(handedness_df["Name"].str.lower().str.strip(), handedness_df["Side"]))
+
+            def get_stat_value(name, stats, stat_key):
+                handed = handedness_dict.get(name.lower().strip(), "R")
+                if stat_key == "RightFly":
+                    return stats.get("PullAir %") if handed == "R" else stats.get("OppoAir %")
+                elif stat_key == "LeftFly":
+                    return stats.get("PullAir %") if handed == "L" else stats.get("OppoAir %")
+                else:
+                    return stats.get(stat_key)
+
+            results = []
+            for line in batter_lines:
+                parts = [x.strip() for x in line.split("|")]
+                stat_dict = {}
+                for p in parts[1:]:
+                    if ": " in p:
+                        k, v = p.split(": ")
+                        try:
+                            stat_dict[k.strip()] = float(v)
+                        except:
+                            stat_dict[k.strip()] = None
+                stat_dict["Name"] = parts[0]
+                values = [get_stat_value(stat_dict["Name"], stat_dict, s) for s in stat_selections]
+                if None not in values:
+                    score = sum(w * v for w, v in zip(weight_inputs, values))
+                    results.append((stat_dict["Name"], score))
+
+            results.sort(key=lambda x: x[1], reverse=True)
+            df = pd.DataFrame(results, columns=["Player", "Score"])
+            st.dataframe(df, use_container_width=True)
 
 # --- 11-DAY TAB ---
 with tab2:
-    st.markdown("11-Day logic here")
+    selected_matchup_7d = st.selectbox("Select Matchup (11-Day)", matchups if matchups else ["No matchups available"], key="7d_matchup")
+    team1_7d, team2_7d = selected_matchup_7d.split(" @ ")
+    available_7d_stats = ["EV", "Barrel %", "FB %"]
+    default_weights_7d = [0.33, 0.33, 0.34]
 
-# --- WEATHER TAB (with DEBUG) ---
+    st.markdown("### 🎯 11-Day Stat Weights")
+    weight_inputs_7d = []
+    for i, stat in enumerate(available_7d_stats):
+        col1, col2 = st.columns(2)
+        col1.markdown(f"**{stat}**")
+        weight = col2.number_input(f"Weight {stat}", 0.0, 1.0, default_weights_7d[i], step=0.01, key=f"7d_weight_{i}")
+        weight_inputs_7d.append(weight)
+
+    if st.button("⚡ Run Model + Rank (11-Day Stats)"):
+        with st.spinner("Fetching player data..."):
+            batters, _ = get_players_and_pitchers(team1_7d, team2_7d)
+            today = datetime.now().strftime('%Y-%m-%d')
+            eleven_days_ago = (datetime.now() - timedelta(days=11)).strftime('%Y-%m-%d')
+
+            handedness_df = pd.read_csv("handedness.csv")
+            handedness_dict = dict(zip(handedness_df["Name"].str.lower().str.strip(), handedness_df["Side"]))
+
+            all_stats = []
+            for name in batters:
+                player_id = lookup_player_id(name)
+                if player_id is None:
+                    continue
+                try:
+                    data = statcast_batter(eleven_days_ago, today, player_id)
+                    if data.empty:
+                        continue
+                    avg_ev = data['launch_speed'].mean(skipna=True)
+                    barrel_events = data[data['launch_speed'] > 95]
+                    barrel_pct = len(barrel_events) / len(data) if len(data) > 0 else 0
+                    fb_pct = len(data[data['launch_angle'] >= 25]) / len(data) if len(data) > 0 else 0
+                    side = handedness_dict.get(name.lower().strip(), "")
+                    label = f"{name} ({side})" if side else name
+                    all_stats.append((label, avg_ev, barrel_pct, fb_pct))
+                except:
+                    continue
+
+            results = []
+            for name, ev, barrel, fb in all_stats:
+                values = [ev, barrel * 100, fb * 100]
+                score = sum(w * v for w, v in zip(weight_inputs_7d, values))
+                results.append((name, score))
+
+            results.sort(key=lambda x: x[1], reverse=True)
+            df_7d = pd.DataFrame(results, columns=["Player", "Score"])
+            st.dataframe(df_7d, use_container_width=True)
+
+# --- WEATHER TAB (with full location debug) ---
 with tab3:
     st.markdown("### 🌬️ Weather Conditions (via RotoGrinders)")
-    matchups = get_today_matchups()
     selected_weather_game = st.selectbox("Select Today's Matchup (Weather)", matchups if matchups else ["No matchups available"], key="weather_matchup")
 
     if selected_weather_game and selected_weather_game != "No matchups available":
@@ -86,28 +200,29 @@ with tab3:
 
         team1, team2 = selected_weather_game.split(" @ ")
         cities = [TEAM_CITY_MAP.get(team1, ""), TEAM_CITY_MAP.get(team2, "")]
-
         st.markdown(f"**🧪 Debug: Matching Cities →** `{cities}`")
 
         try:
-            rg_url = "https://rotogrinders.com/weather/mlb"
-            response = requests.get(rg_url)
+            url = "https://rotogrinders.com/weather/mlb"
+            response = requests.get(url)
             soup = BeautifulSoup(response.text, "html.parser")
-            game_blocks = soup.find_all("div", class_="weather-graphic")
+            blocks = soup.find_all("div", class_="weather-graphic")
 
             found = False
-            for i, block in enumerate(game_blocks):
+            for i, block in enumerate(blocks):
                 location_div = block.find("div", class_="weather-graphic__location")
                 arrow_div = block.find("div", class_="weather-graphic__arrow")
                 speed_div = block.find("div", class_="weather-graphic__speed")
 
+                if location_div:
+                    location_text = location_div.text.strip()
+                    st.markdown(f"**Block {i} Location Text:** `{location_text}`")
+
                 if location_div and arrow_div and speed_div:
                     location_text = location_div.text.strip().lower()
-                    st.markdown(f"**Block {i} → Location:** `{location_text}`")
-
                     if any(city.lower() in location_text for city in cities):
-                        rotation_style = arrow_div.get("style", "")
-                        wind_rotation = rotation_style.split("rotate(")[-1].split("deg")[0].strip()
+                        style = arrow_div.get("style", "")
+                        wind_rotation = style.split("rotate(")[-1].split("deg")[0].strip()
                         wind_speed = speed_div.text.strip()
 
                         try:
