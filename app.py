@@ -30,7 +30,7 @@ STADIUM_KEYWORDS = {
     "BOS": "fenway park", "CHC": "wrigley field", "CHW": "guaranteed rate field",
     "CIN": "great american ball park", "CLE": "progressive field", "COL": "coors field",
     "DET": "comerica park", "HOU": "minute maid park", "KCR": "kauffman stadium",
-    "LAA": "angel stadium", "LAD": "dodger stadium", "MIA": "loanDepot park",
+    "LAA": "angel stadium", "LAD": "dodger stadium", "MIA": "loandepot park",
     "MIL": "american family field", "MIN": "target field", "NYM": "citi field",
     "NYY": "yankee stadium", "OAK": "sutter health park", "PHI": "citizens bank park",
     "PIT": "pnc park", "SDP": "petco park", "SEA": "t-mobile park", "SFG": "oracle park",
@@ -67,6 +67,7 @@ def get_today_matchups():
     return matchups
 
 # --- UI ---
+matchups = get_today_matchups()
 tab1, tab2, tab3 = st.tabs(["Season Stats", "11-Day Stats", "Weather"])
 
 # === TAB 1 ===
@@ -79,7 +80,6 @@ with tab1:
         4. Click **Run Model + Rank** to view the top hitters.
         """)
 
-    matchups = get_today_matchups()
     selected_matchup = st.selectbox("Select Today's Matchup", matchups if matchups else ["No matchups available"])
     team1, team2 = selected_matchup.split(" @ ")
 
@@ -228,23 +228,31 @@ with tab3:
         blocks = soup.find_all("div", class_="weather-graphic__container")
 
         found = False
+        all_locations = []
+
         for block in blocks:
             location_div = block.find("div", class_="weather-graphic__location")
             arrow_div = block.find("div", class_="weather-graphic__arrow")
             speed_div = block.find("div", class_="weather-graphic__speed")
             if not (location_div and arrow_div and speed_div):
                 continue
+
             location = location_div.get_text().strip().lower()
-            if any(k in location for k in keywords if k):
+            all_locations.append(location)
+
+            if any(k in location or location in k for k in keywords if k):
                 wind_dir = arrow_div.get("style", "")
                 wind_speed = speed_div.get_text(strip=True)
-                st.markdown(f"**✅ Wind Speed:** {wind_speed}")
-                st.markdown(f"**✅ Wind Dir (style):** `{wind_dir}`")
+                st.success(f"✅ Location match: `{location}`")
+                st.markdown(f"**💨 Wind Speed:** {wind_speed}")
+                st.markdown(f"**🧭 Wind Dir (raw style):** `{wind_dir}`")
                 found = True
                 break
 
         if not found:
-            st.warning("⚠️ No wind data found for this matchup. Try updating STADIUM_KEYWORDS if this persists.")
+            st.warning("⚠️ No wind data found for this matchup.")
+            st.markdown("### 🗺️ All Locations Found on RotoGrinders:")
+            st.code("\n".join(all_locations))
 
     except Exception as e:
         st.error(f"Error loading weather data: {e}")
