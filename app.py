@@ -212,38 +212,60 @@ with tab3:
     selected_weather_game = st.selectbox("Select Today's Matchup (Weather)", matchups if matchups else ["No matchups available"], key="weather_matchup")
 
     if selected_weather_game and selected_weather_game != "No matchups available":
+        TEAM_CITY_MAP = {
+            "ARI": "Arizona", "ATL": "Atlanta", "BAL": "Baltimore", "BOS": "Boston",
+            "CHC": "Chicago", "CHW": "Chicago", "CIN": "Cincinnati", "CLE": "Cleveland",
+            "COL": "Colorado", "DET": "Detroit", "HOU": "Houston", "KCR": "Kansas City",
+            "LAA": "Los Angeles", "LAD": "Los Angeles", "MIA": "Miami", "MIL": "Milwaukee",
+            "MIN": "Minnesota", "NYM": "New York", "NYY": "New York", "OAK": "Oakland",
+            "PHI": "Philadelphia", "PIT": "Pittsburgh", "SDP": "San Diego", "SEA": "Seattle",
+            "SFG": "San Francisco", "STL": "St. Louis", "TBR": "Tampa Bay", "TEX": "Texas",
+            "TOR": "Toronto", "WSH": "Washington"
+        }
+
+        team1, team2 = selected_weather_game.split(" @ ")
+        cities = [TEAM_CITY_MAP.get(team1, ""), TEAM_CITY_MAP.get(team2, "")]
+
         try:
             rg_url = "https://rotogrinders.com/weather/mlb"
             response = requests.get(rg_url)
             soup = BeautifulSoup(response.text, "html.parser")
+            game_blocks = soup.find_all("div", class_="weather-graphic")
 
-            game_blocks = soup.find_all("div", class_="weather-graphic__wrapper")
             found = False
-            team1, team2 = selected_weather_game.split(" @ ")
-
             for block in game_blocks:
                 location_div = block.find("div", class_="weather-graphic__location")
-                if location_div:
-                    location_text = location_div.get_text().strip().lower()
-                    if team1.lower() in location_text or team2.lower() in location_text:
-                        arrow_div = block.find("div", class_="weather-graphic__arrow")
-                        speed_div = block.find("div", class_="weather-graphic__speed")
+                arrow_div = block.find("div", class_="weather-graphic__arrow")
+                speed_div = block.find("div", class_="weather-graphic__speed")
 
-                        if arrow_div and speed_div:
-                            rotation_style = arrow_div.get("style", "")
-                            rotation_value = rotation_style.split("rotate(")[-1].split("deg")[0].strip()
+                if location_div and arrow_div and speed_div:
+                    location_text = location_div.text.strip().lower()
+                    if any(city.lower() in location_text for city in cities):
+                        rotation_style = arrow_div.get("style", "")
+                        wind_rotation = rotation_style.split("rotate(")[-1].split("deg")[0].strip()
+                        wind_speed = speed_div.text.strip()
 
-                            st.markdown(f"**Wind Strength:** {speed_div.get_text(strip=True)}**")
-                            st.markdown("**Wind Direction:**")
-                            st.markdown(
-                                f'<div style="display:inline-block; transform: rotate({rotation_value}deg); font-size: 48px;">⬆️</div>',
-                                unsafe_allow_html=True
-                            )
-                            found = True
-                            break
+                        try:
+                            angle = int(wind_rotation)
+                            if 45 <= angle < 135:
+                                arrow_emoji = "⬇️"
+                            elif 135 <= angle < 225:
+                                arrow_emoji = "⬅️"
+                            elif 225 <= angle < 315:
+                                arrow_emoji = "⬆️"
+                            else:
+                                arrow_emoji = "➡️"
+                        except:
+                            arrow_emoji = "❓"
+
+                        st.markdown(f"### 💨 Wind Conditions for `{selected_weather_game}`")
+                        st.markdown(f"**Location:** {location_div.text.strip()}")
+                        st.markdown(f"**Wind Speed:** {wind_speed}")
+                        st.markdown(f"**Wind Direction:** {arrow_emoji} ({wind_rotation}°)")
+                        found = True
+                        break
 
             if not found:
-                st.warning("No wind data found for this matchup on RotoGrinders.")
-
+                st.warning("⚠️ No wind data found for this matchup on RotoGrinders.")
         except Exception as e:
             st.error(f"Error fetching weather data: {str(e)}")
