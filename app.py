@@ -25,6 +25,11 @@ TEAM_NAME_MAP_REV = {
     "Washington Nationals": "WSH"
 }
 
+# Build ABBR -> Full name (first occurrence wins)
+ABBR_TO_FULL = {}
+for full, abbr in TEAM_NAME_MAP_REV.items():
+    ABBR_TO_FULL.setdefault(abbr, full)
+
 STADIUM_KEYWORDS = {
     "ARI": "chase field", "ATL": "truist park", "BAL": "camden yards",
     "BOS": "fenway park", "CHC": "wrigley field", "CHW": "guaranteed rate field",
@@ -42,14 +47,21 @@ STADIUM_KEYWORDS = {
 id_map = pd.read_csv("player_id_map.csv")
 def lookup_player_id(name):
     try:
-        row = id_map.loc[id_map['PLAYERNAME'].str.lower() == name.lower()]
-        if not row.empty:
-            return int(row['MLBID'].values[0])
-        row = id_map.loc[(id_map['FIRSTNAME'].str.strip() + ' ' + id_map['LASTNAME'].str.strip()).str.lower() == name.lower()]
-        if not row.empty:
-            return int(row['MLBID'].values[0])
-    except:
+        row = id_map.loc(id_map['PLAYERNAME'].str.lower() == name.lower())
+    except TypeError:
+        # Pandas sometimes treats .loc(callable) oddly; use bracket syntax:
+        row = id_map[id_map['PLAYERNAME'].str.lower() == name.lower()]
+    if not row.empty:
+        return int(row['MLBID'].values[0])
+    try:
+        row = id_map[
+            (id_map['FIRSTNAME'].astype(str).str.strip() + ' ' + id_map['LASTNAME'].astype(str).str.strip()).str.lower()
+            == name.lower()
+        ]
+    except Exception:
         return None
+    if not row.empty:
+        return int(row['MLBID'].values[0])
     return None
 
 # --- GET TODAY'S MATCHUPS ---
@@ -173,31 +185,66 @@ with tab2:
 
     if st.button("⚡ Run Model + Rank (11-Day Stats)"):
         with st.spinner("📈 Fetching 11-day player data... please wait!"):
+            # Try with ABBR codes first
             batters, _ = get_players_and_pitchers(team1_7d, team2_7d)
+            abbr_used = True
+
+            # If thin/empty (common symptom for A's), retry with Full Team Names
+            def _thin(lst): return (lst is None) or (len(lst) < 4)
+            if _thin(batters):
+                full1 = ABBR_TO_FULL.get(team1_7d, team1_7d)
+                full2 = ABBR_TO_FULL.get(team2_7d, team2_7d)
+                batters_retry, _ = get_players_and_pitchers(full1, full2)
+                if not _thin(batters_retry):
+                    batters = batters_retry
+                    abbr_used = False
+
             today = datetime.now().strftime('%Y-%m-%d')
             eleven_days_ago = (datetime.now() - timedelta(days=11)).strftime('%Y-%m-%d')
 
             handedness_df = pd.read_csv("handedness.csv")
             handedness_dict = dict(zip(handedness_df["Name"].str.lower().str.strip(), handedness_df["Side"]))
 
+            # Debug info so you can confirm what was used and what came back
+            st.caption("🔎 Debug (11-Day Tab)")
+            st.write({
+                "input_matchup": selected_matchup_7d,
+                "lineup_query_used": "ABBR" if abbr_used else "FULL",
+                "team1_used": team1_7d if abbr_used else ABBR_TO_FULL.get(team1_7d, team1_7d),
+                "team2_used": team2_7d if abbr_used else ABBR_TO_FULL.get(team2_7d, team2_7d),
+                "num_batters": len(batters) if batters else 0
+            })
+
+            if not batters:
+                st.error("Could not load batters from the lineup source for this matchup.")
+                st.stop()
+
             all_stats = []
+            debug_rows = []
+
             for name in batters:
                 player_id = lookup_player_id(name)
-                if player_id is None:
-                    continue
-                try:
-                    data = statcast_batter(eleven_days_ago, today, player_id)
-                    if data.empty:
-                        continue
-                    avg_ev = data['launch_speed'].mean(skipna=True)
-                    barrel_events = data[data['launch_speed'] > 95]
-                    barrel_pct = len(barrel_events) / len(data) if len(data) > 0 else 0
-                    fb_pct = len(data[data['launch_angle'] >= 25]) / len(data) if len(data) > 0 else 0
-                    side = handedness_dict.get(name.lower().strip(), "")
-                    label = f"{name} ({side})" if side else name
-                    all_stats.append((label, avg_ev, barrel_pct, fb_pct))
-                except:
-                    continue
+                note = "ok" if player_id else "id_not_found_csv"
+                if player_id:
+                    try:
+                        data = statcast_batter(eleven_days_ago, today, player_id)
+                        if data is None or data.empty:
+                            note = "no_statcast_rows"
+                        else:
+                            avg_ev = data['launch_speed'].mean(skipna=True)
+                            barrel_events = data[data['launch_speed'] > 95]
+                            barrel_pct = len(barrel_events) / len(data) if len(data) > 0 else 0
+                            fb_pct = len(data[data['launch_angle'] >= 25]) / len(data) if len(data) > 0 else 0
+                            side = handedness_dict.get(name.lower().strip(), "")
+                            label = f"{name} ({side})" if side else name
+                            all_stats.append((label, avg_ev, barrel_pct, fb_pct))
+                    except Exception as e:
+                        note = f"statcast_error: {e}"
+                debug_rows.append((name, player_id, note))
+
+            # Show quick debug table
+            dbg_df = pd.DataFrame(debug_rows, columns=["Player", "MLBAM_ID", "Note"])
+            st.dataframe(dbg_df, use_container_width=True)
 
             if not all_stats:
                 st.error("No data found for selected players.")
