@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 from datetime import datetime, timedelta
-from pybaseball import statcast_batter
+from pybaseball import statcast_batter, playerid_lookup  # added playerid_lookup
 from get_lineups import get_players_and_pitchers
 from bs4 import BeautifulSoup
 
@@ -25,11 +25,6 @@ TEAM_NAME_MAP_REV = {
     "Washington Nationals": "WSH"
 }
 
-# Build ABBR -> Full name (first occurrence wins)
-ABBR_TO_FULL = {}
-for full, abbr in TEAM_NAME_MAP_REV.items():
-    ABBR_TO_FULL.setdefault(abbr, full)
-
 STADIUM_KEYWORDS = {
     "ARI": "chase field", "ATL": "truist park", "BAL": "camden yards",
     "BOS": "fenway park", "CHC": "wrigley field", "CHW": "guaranteed rate field",
@@ -45,23 +40,41 @@ STADIUM_KEYWORDS = {
 
 # --- PLAYER ID MAP ---
 id_map = pd.read_csv("player_id_map.csv")
-def lookup_player_id(name):
+
+def lookup_player_id(name: str):
+    """
+    First check your player_id_map.csv; if missing, try pybaseball.playerid_lookup
+    (with light suffix cleanup for Jr., Sr., II, III, IV).
+    """
+    # Try CSV by full name
     try:
-        row = id_map.loc(id_map['PLAYERNAME'].str.lower() == name.lower())
-    except TypeError:
-        # Pandas sometimes treats .loc(callable) oddly; use bracket syntax:
-        row = id_map[id_map['PLAYERNAME'].str.lower() == name.lower()]
-    if not row.empty:
-        return int(row['MLBID'].values[0])
-    try:
-        row = id_map[
-            (id_map['FIRSTNAME'].astype(str).str.strip() + ' ' + id_map['LASTNAME'].astype(str).str.strip()).str.lower()
-            == name.lower()
-        ]
+        row = id_map.loc[id_map['PLAYERNAME'].str.lower() == name.lower()]
+        if not row.empty:
+            return int(row['MLBID'].values[0])
+        # Try CSV by FIRSTNAME + LASTNAME columns
+        row = id_map.loc[(id_map['FIRSTNAME'].str.strip() + ' ' + id_map['LASTNAME'].str.strip()).str.lower() == name.lower()]
+        if not row.empty:
+            return int(row['MLBID'].values[0])
     except Exception:
-        return None
-    if not row.empty:
-        return int(row['MLBID'].values[0])
+        pass
+
+    # Fallback: pybaseball lookup
+    try:
+        clean = name.replace(",", "")
+        parts = clean.split()
+        suffixes = {"jr", "sr", "ii", "iii", "iv"}
+        parts_clean = [p for p in parts if p.lower().strip(".") not in suffixes]
+        if len(parts_clean) >= 2:
+            first = parts_clean[0]
+            last = " ".join(parts_clean[1:])
+            df = playerid_lookup(last, first)
+            if df is not None and not df.empty:
+                if 'mlb_played_last' in df.columns:
+                    df = df.sort_values(by='mlb_played_last', ascending=False)
+                return int(df.iloc[0]['key_mlbam'])
+    except Exception:
+        pass
+
     return None
 
 # --- GET TODAY'S MATCHUPS ---
@@ -185,19 +198,58 @@ with tab2:
 
     if st.button("⚡ Run Model + Rank (11-Day Stats)"):
         with st.spinner("📈 Fetching 11-day player data... please wait!"):
-            # Try with ABBR codes first
-            batters, _ = get_players_and_pitchers(team1_7d, team2_7d)
-            abbr_used = True
+            # Start with the 3-letter codes from the dropdown
+            abbr1, abbr2 = team1_7d, team2_7d
+            source_used = "ABBR (3-letter)"
 
-            # If thin/empty (common symptom for A's), retry with Full Team Names
-            def _thin(lst): return (lst is None) or (len(lst) < 4)
+            # Attempt #1
+            batters, _ = None, None
+            try:
+                batters, _ = get_players_and_pitchers(abbr1, abbr2)
+            except Exception:
+                batters = None
+
+            # If empty/thin, try alternates. Oakland is the main pain point, but include some other common variants too.
+            def _thin(lst): 
+                return (lst is None) or (len(lst) < 4)
+
+            ALT_LISTS = {
+                "TBR": ["TBR", "TB", "TAM"],
+                "KCR": ["KCR", "KC"],
+                "SDP": ["SDP", "SD"],
+                "SFG": ["SFG", "SF"],
+                "WSH": ["WSH", "WSN"],
+                "CHW": ["CHW", "CWS"],
+                # Oakland special:
+                "OAK": ["OAK", "OAKLAND", "OAKL", "ATH", "ATHLETICS"],
+            }
+
+            def alternates(code):
+                return ALT_LISTS.get(code, [code])
+
             if _thin(batters):
-                full1 = ABBR_TO_FULL.get(team1_7d, team1_7d)
-                full2 = ABBR_TO_FULL.get(team2_7d, team2_7d)
-                batters_retry, _ = get_players_and_pitchers(full1, full2)
-                if not _thin(batters_retry):
-                    batters = batters_retry
-                    abbr_used = False
+                tried = set()
+                found_combo = None
+                for a1 in alternates(abbr1):
+                    for a2 in alternates(abbr2):
+                        if (a1, a2) in tried:
+                            continue
+                        tried.add((a1, a2))
+                        if (a1, a2) == (abbr1, abbr2):
+                            continue
+                        try:
+                            b_alt, _ = get_players_and_pitchers(a1, a2)
+                            if not _thin(b_alt):
+                                batters = b_alt
+                                found_combo = (a1, a2)
+                                break
+                        except Exception:
+                            pass
+                    if found_combo:
+                        break
+                if found_combo:
+                    source_used = f"ABBR (alternate) → {found_combo[0]} @ {found_combo[1]}"
+                    abbr1, abbr2 = found_combo
 
             today = datetime.now().strftime('%Y-%m-%d')
             eleven_days_ago = (datetime.now() - timedelta(days=11)).strftime('%Y-%m-%d')
@@ -205,14 +257,14 @@ with tab2:
             handedness_df = pd.read_csv("handedness.csv")
             handedness_dict = dict(zip(handedness_df["Name"].str.lower().str.strip(), handedness_df["Side"]))
 
-            # Debug info so you can confirm what was used and what came back
+            # Debug snapshot so we can quickly see what happened on OAK slates
             st.caption("🔎 Debug (11-Day Tab)")
             st.write({
                 "input_matchup": selected_matchup_7d,
-                "lineup_query_used": "ABBR" if abbr_used else "FULL",
-                "team1_used": team1_7d if abbr_used else ABBR_TO_FULL.get(team1_7d, team1_7d),
-                "team2_used": team2_7d if abbr_used else ABBR_TO_FULL.get(team2_7d, team2_7d),
-                "num_batters": len(batters) if batters else 0
+                "lineup_query_used": source_used,
+                "team1_used": abbr1,
+                "team2_used": abbr2,
+                "num_batters": (len(batters) if batters else 0)
             })
 
             if not batters:
@@ -223,11 +275,11 @@ with tab2:
             debug_rows = []
 
             for name in batters:
-                player_id = lookup_player_id(name)
-                note = "ok" if player_id else "id_not_found_csv"
-                if player_id:
+                pid = lookup_player_id(name)
+                note = "ok" if pid else "id_not_found_csv_or_lookup"
+                if pid:
                     try:
-                        data = statcast_batter(eleven_days_ago, today, player_id)
+                        data = statcast_batter(eleven_days_ago, today, pid)
                         if data is None or data.empty:
                             note = "no_statcast_rows"
                         else:
@@ -240,11 +292,9 @@ with tab2:
                             all_stats.append((label, avg_ev, barrel_pct, fb_pct))
                     except Exception as e:
                         note = f"statcast_error: {e}"
-                debug_rows.append((name, player_id, note))
+                debug_rows.append((name, pid, note))
 
-            # Show quick debug table
-            dbg_df = pd.DataFrame(debug_rows, columns=["Player", "MLBAM_ID", "Note"])
-            st.dataframe(dbg_df, use_container_width=True)
+            st.dataframe(pd.DataFrame(debug_rows, columns=["Player", "MLBAM_ID", "Note"]), use_container_width=True)
 
             if not all_stats:
                 st.error("No data found for selected players.")
