@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from pybaseball import statcast_batter, playerid_lookup  # added playerid_lookup
 from get_lineups import get_players_and_pitchers
 from bs4 import BeautifulSoup
+from PIL import Image
 
 # --- CONFIG ---
 st.set_page_config(page_title="Hib's Batter Data Tool", layout="wide")
@@ -350,32 +351,45 @@ with tab3:
             wind_dir = weather_data[1].find_all("span", recursive=False)[-2].find("span", class_="weather-gametime-value bold").get_text()
             wind_speed = weather_data[1].find_all("span", recursive=False)[-1].find("span", class_="weather-gametime-value bold").get_text()
 
-            # characters for each direction
-            directions = {
-                'N': '↓',
-                'NNE': '↙',
-                'NE': '↙',
-                'ENE': '↙',
-                'E': '←',
-                'ESE': '↖',
-                'SE': '↖',
-                'SSE': '↖',
-                'S': '↑',
-                'SSW': '↗',
-                'SW': '↗',
-                'WSW': '↗',
-                'W': '→',
-                'WNW': '↘',
-                'NW': '↘',
-                'NNW': '↘'
-            }
+            # Find all <path> elements within the <svg>
+            paths = block.find_all("span", class_="weather-gametime-icon")[-1].find('svg').find_all('path')
+
+            # Target the third <path> (index 2, assuming you meant the one with rotate)
+            target_path = paths[2]  # Second path would be paths[1], but it has no rotate
+
+            # Get the style attribute
+            style = target_path.get('style')
+
+            # Parse the style attribute to extract the transform property
+            style_dict = dict(item.strip().split(':') for item in style.split(';') if item)
+            transform = style_dict.get('transform', '')
+
+            # Extract the rotation angle from the transform property
+            import re
+
+            rotation_match = re.search(r'rotate\(([\d.]+)deg\)', transform)
+            if rotation_match:
+                rotation_angle = float(rotation_match.group(1))
+            else:
+                rotation_angle = 0.0
+
 
             if any(k in location or location in k for k in keywords if k):
                 st.success(f"✅ Location match: `{location}`")
-                st.markdown(f"**💨 Wind Speed:** {wind_speed} MPH")
-                st.markdown(f"**🧭 Wind Direction:** {directions[wind_dir.upper()]}")
-                st.markdown(f"**🌧️ Precipitation::** `{precipitation}`")
-                st.markdown(f"**🌡️Temperature::** `{temp}`")
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown(f"**💨 Wind Speed:**")
+                    st.markdown(f"**🧭 Wind Direction:**")
+                    st.markdown(f"**🌧️ Precipitation::**")
+                    st.markdown(f"**🌡️Temperature::**")
+                with col2:
+                    st.markdown(f"`{wind_speed} MPH`")
+                    img = Image.open("arrow.png")
+                    img = img.rotate(360 - rotation_angle, expand=True)
+                    st.image(img)
+                    st.markdown(f"`{precipitation}`")
+                    st.markdown(f"`{temp}`")
                 found = True
                 break
 
