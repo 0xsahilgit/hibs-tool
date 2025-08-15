@@ -335,8 +335,6 @@ with tab3:
             location = location_div.get_text()[2:].strip().lower()
             all_locations.append(location)
 
-            if location == "coors field":
-                print("kjsahge")
 
             weather_data = block.find_all("div", class_="weather-gametime-set")
 
@@ -352,11 +350,30 @@ with tab3:
             wind_dir = weather_data[1].find_all("span", recursive=False)[-2].find("span", class_="weather-gametime-value bold").get_text()
             wind_speed = weather_data[1].find_all("span", recursive=False)[-1].find("span", class_="weather-gametime-value bold").get_text()
 
+            # characters for each direction
+            directions = {
+                'N': '↓',
+                'NNE': '↙',
+                'NE': '↙',
+                'ENE': '↙',
+                'E': '←',
+                'ESE': '↖',
+                'SE': '↖',
+                'SSE': '↖',
+                'S': '↑',
+                'SSW': '↗',
+                'SW': '↗',
+                'WSW': '↗',
+                'W': '→',
+                'WNW': '↘',
+                'NW': '↘',
+                'NNW': '↘'
+            }
 
             if any(k in location or location in k for k in keywords if k):
                 st.success(f"✅ Location match: `{location}`")
                 st.markdown(f"**💨 Wind Speed:** {wind_speed} MPH")
-                st.markdown(f"**🧭 Wind Direction:** `{wind_dir}`")
+                st.markdown(f"**🧭 Wind Direction:** {directions[wind_dir.upper()]}")
                 st.markdown(f"**🌧️ Precipitation::** `{precipitation}`")
                 st.markdown(f"**🌡️Temperature::** `{temp}`")
                 found = True
