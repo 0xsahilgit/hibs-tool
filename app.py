@@ -368,108 +368,41 @@ with tab2:
     for i, stat in enumerate(available_7d_stats):
         col1, col2 = st.columns(2)
         col1.markdown(f"**{stat}**")
-        weight = col2.number_input(f"Weight {stat}", min_value=0.0, max_value=1.0, value=default_weights_7d[i], step=0.01, key=f"7d_weight_{i}")
+        weight = col2.number_input(f"Weight {stat}", min_value=0.0, max_value=1.0,
+                                   value=default_weights_7d[i], step=0.01, key=f"7d_weight_{i}")
         weight_inputs_7d.append(weight)
 
     if st.button("⚡ Run Model + Rank (11-Day Stats)"):
         with st.spinner("📈 Fetching 11-day player data... please wait!"):
-            # Start with the 3-letter codes from the dropdown
-            abbr1, abbr2 = team1_7d, team2_7d
-            source_used = "ABBR (3-letter)"
-
-            # Attempt #1
-            batters, _ = None, None
-            try:
-                batters, _ = get_players_and_pitchers(abbr1, abbr2)
-            except Exception:
-                batters = None
-
-            # If empty/thin, try alternates. Oakland is the main pain point, but include some other common variants too.
-            def _thin(lst):
-                return (lst is None) or (len(lst) < 4)
-
-            ALT_LISTS = {
-                "TBR": ["TBR", "TB", "TAM"],
-                "KCR": ["KCR", "KC"],
-                "SDP": ["SDP", "SD"],
-                "SFG": ["SFG", "SF"],
-                "WSH": ["WSH", "WSN"],
-                "CHW": ["CHW", "CWS"],
-                # Oakland special:
-                "OAK": ["OAK", "OAKLAND", "OAKL", "ATH", "ATHLETICS"],
-            }
-
-            def alternates(code):
-                return ALT_LISTS.get(code, [code])
-
-            if _thin(batters):
-                tried = set()
-                found_combo = None
-                for a1 in alternates(abbr1):
-                    for a2 in alternates(abbr2):
-                        if (a1, a2) in tried:
-                            continue
-                        tried.add((a1, a2))
-                        if (a1, a2) == (abbr1, abbr2):
-                            continue
-                        try:
-                            b_alt, _ = get_players_and_pitchers(a1, a2)
-                            if not _thin(b_alt):
-                                batters = b_alt
-                                found_combo = (a1, a2)
-                                break
-                        except Exception:
-                            pass
-                    if found_combo:
-                        break
-                if found_combo:
-                    source_used = f"ABBR (alternate) → {found_combo[0]} @ {found_combo[1]}"
-                    abbr1, abbr2 = found_combo
-
+            batters, _ = get_players_and_pitchers(team1_7d, team2_7d)
             today = datetime.now().strftime('%Y-%m-%d')
             eleven_days_ago = (datetime.now() - timedelta(days=11)).strftime('%Y-%m-%d')
 
             handedness_df = pd.read_csv("handedness.csv")
             handedness_dict = dict(zip(handedness_df["Name"].str.lower().str.strip(), handedness_df["Side"]))
 
-            # Debug snapshot so we can quickly see what happened on OAK slates
-            st.caption("🔎 Debug (11-Day Tab)")
-            st.write({
-                "input_matchup": selected_matchup_7d,
-                "lineup_query_used": source_used,
-                "team1_used": abbr1,
-                "team2_used": abbr2,
-                "num_batters": (len(batters) if batters else 0)
-            })
-
-            if not batters:
-                st.error("Could not load batters from the lineup source for this matchup.")
-                st.stop()
-
             all_stats = []
-            debug_rows = []
-
             for name in batters:
-                pid = lookup_player_id(name)
-                note = "ok" if pid else "id_not_found_csv_or_lookup"
-                if pid:
-                    try:
-                        data = statcast_batter(eleven_days_ago, today, pid)
-                        if data is None or data.empty:
-                            note = "no_statcast_rows"
-                        else:
-                            avg_ev = data['launch_speed'].mean(skipna=True)
-                            barrel_events = data[data['launch_speed'] > 95]
-                            barrel_pct = len(barrel_events) / len(data) if len(data) > 0 else 0
-                            fb_pct = len(data[data['launch_angle'] >= 25]) / len(data) if len(data) > 0 else 0
-                            side = handedness_dict.get(name.lower().strip(), "")
-                            label = f"{name} ({side})" if side else name
-                            all_stats.append((label, avg_ev, barrel_pct, fb_pct))
-                    except Exception as e:
-                        note = f"statcast_error: {e}"
-                debug_rows.append((name, pid, note))
-
-            st.dataframe(pd.DataFrame(debug_rows, columns=["Player", "MLBAM_ID", "Note"]), use_container_width=True)
+                player_id = lookup_player_id(name)
+                if player_id is None:
+                    name_parts = name.split(" ")
+                    if len(name_parts) > 1:
+                        player_id = lookup_player_id(name_parts[0])
+                    if player_id is None:
+                        continue
+                try:
+                    data = statcast_batter(eleven_days_ago, today, player_id)
+                    if data.empty:
+                        continue
+                    avg_ev = data['launch_speed'].mean(skipna=True)
+                    barrel_events = data[data['launch_speed'] > 95]
+                    barrel_pct = len(barrel_events) / len(data) if len(data) > 0 else 0
+                    fb_pct = len(data[data['launch_angle'] >= 25]) / len(data) if len(data) > 0 else 0
+                    side = handedness_dict.get(name.lower().strip(), "")
+                    label = f"{name} ({side})" if side else name
+                    all_stats.append((label, avg_ev, barrel_pct, fb_pct))
+                except:
+                    continue
 
             if not all_stats:
                 st.error("No data found for selected players.")
@@ -484,6 +417,7 @@ with tab2:
                 df_7d = pd.DataFrame(results, columns=["Player", "Score"])
                 st.markdown("### 🏆 Ranked Hitters (11-Day)")
                 st.dataframe(df_7d, use_container_width=True)
+
 
 # === TAB 3 ===
 with tab3:
