@@ -14,22 +14,18 @@ TEAM_NAME_MAP = {
     "TEX": "Texas Rangers", "TOR": "Toronto Blue Jays", "WSH": "Washington Nationals"
 }
 
-# Allow aliases like "Athletics" → "OAK"
+# Allow aliases like "OAK" -> "Athletics"
 TEAM_NAME_ALIASES = {
-    "Athletics": "OAK"
+    "OAK": "Athletics"
 }
 
 def get_players_and_pitchers(team1_abbr, team2_abbr):
-    # Handle any alternate inputs
-    team1_abbr = TEAM_NAME_ALIASES.get(team1_abbr, team1_abbr)
-    team2_abbr = TEAM_NAME_ALIASES.get(team2_abbr, team2_abbr)
-
     today = datetime.now().strftime("%Y-%m-%d")
     schedule_url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={today}"
     schedule = requests.get(schedule_url).json()
 
-    team1_name = TEAM_NAME_MAP[team1_abbr.upper()]
-    team2_name = TEAM_NAME_MAP[team2_abbr.upper()]
+    team1_name = TEAM_NAME_ALIASES.get(team1_abbr, TEAM_NAME_MAP[team1_abbr.upper()])
+    team2_name = TEAM_NAME_ALIASES.get(team2_abbr, TEAM_NAME_MAP[team2_abbr.upper()])
 
     for date in schedule.get("dates", []):
         for game in date.get("games", []):
