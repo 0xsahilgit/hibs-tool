@@ -7,6 +7,11 @@ from get_lineups import get_players_and_pitchers
 from bs4 import BeautifulSoup
 from PIL import Image
 
+# 🔧 extra imports for robust ID resolving
+import re, json, unicodedata, os
+from pathlib import Path
+from difflib import get_close_matches
+
 # --- CONFIG ---
 st.set_page_config(page_title="Hib's Batter Data Tool", layout="wide")
 st.title("⚾ Hib's Batter Data Tool")
@@ -42,39 +47,208 @@ STADIUM_KEYWORDS = {
 # --- PLAYER ID MAP ---
 id_map = pd.read_csv("player_id_map.csv")
 
-def lookup_player_id(name: str):
-    """
-    First check your player_id_map.csv; if missing, try pybaseball.playerid_lookup
-    (with light suffix cleanup for Jr., Sr., II, III, IV).
-    """
-    # Try CSV by full name
+# =========================
+# Robust player ID resolver
+# =========================
+
+ID_CACHE_PATH = Path("id_cache.json")
+_id_cache = {}
+if ID_CACHE_PATH.exists():
     try:
-        row = id_map.loc[id_map['PLAYERNAME'].str.lower() == name.lower()]
-        if not row.empty:
-            return int(row['MLBID'].values[0])
-        # Try CSV by FIRSTNAME + LASTNAME columns
-        row = id_map.loc[(id_map['FIRSTNAME'].str.strip() + ' ' + id_map['LASTNAME'].str.strip()).str.lower() == name.lower()]
-        if not row.empty:
-            return int(row['MLBID'].values[0])
+        _id_cache = json.loads(ID_CACHE_PATH.read_text())
+    except Exception:
+        _id_cache = {}
+
+_SUFFIXES = {"jr", "sr", "ii", "iii", "iv", "v"}
+
+# Common nicknames → formal names (extend as needed)
+NICKNAME_MAP = {
+    "gio": ["giovanni"],
+    "mike": ["michael"],
+    "tony": ["anthony"],
+    "jim": ["james"],
+    "jimmy": ["james"],
+    "joe": ["joseph"],
+    "joey": ["joseph"],
+    "johnny": ["john"],
+    "nick": ["nicholas"],
+    "alex": ["alexander", "alejandro"],
+    "andy": ["andrew"],
+    "drew": ["andrew"],
+    "frankie": ["francisco"],
+    "fran": ["francisco", "francis"],
+    "pepe": ["jose"],
+    "javy": ["javier"],
+    "eddy": ["edward", "eduardo"],
+    "eddie": ["edward", "eduardo"],
+    "nate": ["nathan", "nathaniel"],
+    "jake": ["jacob"],
+    "zach": ["zachary"],
+    # initial-style first names
+    "j.t.": ["jt", "john thomas"],
+    "jj": ["jj", "jeffrey joseph", "jeffery joseph", "joseph james", "james joseph", "john joseph"],
+}
+
+def _strip_accents(s: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+
+def _normalize_name(name: str) -> str:
+    s = name.strip().replace(",", " ")
+    s = s.replace("’", "'").replace(".", "")
+    s = re.sub(r"\s+", " ", s)
+    parts = [p for p in s.split() if p.lower().strip(".") not in _SUFFIXES]
+    s = " ".join(parts)
+    s = s.replace("-", " ")
+    s = re.sub(r"[^\w\s']", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+def _variants(full_name: str):
+    """Yield reasonable first/last variants (nicknames, initials, deaccented)."""
+    base = _normalize_name(full_name)
+    yield base
+
+    na = base.replace("'", "")
+    if na != base:
+        yield na
+
+    deacc = _strip_accents(base)
+    if deacc != base:
+        yield deacc
+    deacc_na = deacc.replace("'", "")
+    if deacc_na != deacc:
+        yield deacc_na
+
+    toks = base.split()
+    if len(toks) >= 2:
+        first, last = toks[0], " ".join(toks[1:])
+        # first + last only
+        fl = f"{first} {last.split()[-1]}"
+        if fl != base:
+            yield fl
+
+        # nickname expansions
+        lf = first.lower()
+        if lf in NICKNAME_MAP:
+            for exp in NICKNAME_MAP[lf]:
+                yield f"{exp.title()} {last}"
+
+        # “JJ” style initials
+        if re.fullmatch(r"[A-Za-z]{1,2}", first) and first.isupper():
+            if len(first) == 2:
+                yield f"{first[0]} {first[1]} {last}"
+                if first == "JJ" and "jj" in NICKNAME_MAP:
+                    for exp in NICKNAME_MAP["jj"]:
+                        yield f"{exp.title()} {last}"
+
+def _save_cache():
+    try:
+        ID_CACHE_PATH.write_text(json.dumps(_id_cache, indent=2))
     except Exception:
         pass
 
-    # Fallback: pybaseball lookup
+def _fuzzy_lastname_candidates(last: str, cutoff=0.86):
+    """Tiny-typo repair for last names (e.g., 'Ursela' → 'Urshela')."""
     try:
-        clean = name.replace(",", "")
-        parts = clean.split()
-        suffixes = {"jr", "sr", "ii", "iii", "iv"}
-        parts_clean = [p for p in parts if p.lower().strip(".") not in suffixes]
-        if len(parts_clean) >= 2:
-            first = parts_clean[0]
-            last = " ".join(parts_clean[1:])
-            df = playerid_lookup(last, first)
-            if df is not None and not df.empty:
-                if 'mlb_played_last' in df.columns:
-                    df = df.sort_values(by='mlb_played_last', ascending=False)
-                return int(df.iloc[0]['key_mlbam'])
+        last_pool = id_map['LASTNAME'].astype(str).str.lower().unique().tolist()
+        return get_close_matches(last.lower(), last_pool, n=3, cutoff=cutoff)
+    except Exception:
+        return []
+
+def _search_statsapi_person_id(name: str):
+    """Last-resort: MLB StatsAPI fuzzy search by name."""
+    try:
+        q = requests.utils.quote(name)
+        url = f"https://statsapi.mlb.com/api/v1/people/search?names={q}"
+        r = requests.get(url, timeout=6)
+        if r.status_code == 200:
+            data = r.json()
+            people = data.get("people", [])
+            if people:
+                return int(people[0]["id"])
+    except Exception:
+        return None
+    return None
+
+def lookup_player_id(name: str):
+    """
+    Cache -> CSV exact -> CSV variants (incl. nickname & fuzzy last name) -> pybaseball -> StatsAPI.
+    """
+    if not name:
+        return None
+
+    # cache
+    if name in _id_cache:
+        return _id_cache[name]
+
+    # quick-access lowercase columns from CSV
+    try:
+        player_lower = id_map['PLAYERNAME'].astype(str).str.lower()
+        first = id_map['FIRSTNAME'].astype(str).str.strip()
+        last = id_map['LASTNAME'].astype(str).str.strip()
+        full_lower = (first + ' ' + last).str.lower()
+    except Exception:
+        player_lower = pd.Series(dtype=str)
+        full_lower = pd.Series(dtype=str)
+
+    # 1) CSV exact
+    try:
+        row = id_map[player_lower == name.lower()]
+        if not row.empty:
+            pid = int(row['MLBID'].values[0]); _id_cache[name] = pid; _save_cache(); return pid
+        row = id_map[full_lower == name.lower()]
+        if not row.empty:
+            pid = int(row['MLBID'].values[0]); _id_cache[name] = pid; _save_cache(); return pid
     except Exception:
         pass
+
+    # 2) CSV variants (nicknames, initials, deaccented, + fuzzy last-name repair)
+    try:
+        for v in _variants(name):
+            lv = v.lower()
+            row = id_map[(player_lower == lv) | (full_lower == lv)]
+            if not row.empty:
+                pid = int(row['MLBID'].values[0]); _id_cache[name] = pid; _save_cache(); return pid
+
+        # fuzzy last name try
+        norm = _normalize_name(name)
+        toks = norm.split()
+        if len(toks) >= 2:
+            f, l = toks[0], toks[-1]
+            for lfix in _fuzzy_lastname_candidates(l):
+                v2 = f"{f} {lfix}"
+                row = id_map[(player_lower == v2.lower()) | (full_lower == v2.lower())]
+                if not row.empty:
+                    pid = int(row['MLBID'].values[0]); _id_cache[name] = pid; _save_cache(); return pid
+                lf = f.lower()
+                if lf in NICKNAME_MAP:
+                    for exp in NICKNAME_MAP[lf]:
+                        v3 = f"{exp.title()} {lfix}"
+                        row = id_map[(player_lower == v3.lower()) | (full_lower == v3.lower())]
+                        if not row.empty:
+                            pid = int(row['MLBID'].values[0]); _id_cache[name] = pid; _save_cache(); return pid
+    except Exception:
+        pass
+
+    # 3) pybaseball fallback on variants
+    try:
+        for v in _variants(name):
+            toks = v.split()
+            if len(toks) >= 2:
+                f, l = toks[0], " ".join(toks[1:])
+                df = playerid_lookup(l, f)
+                if df is not None and not df.empty:
+                    if 'mlb_played_last' in df.columns:
+                        df = df.sort_values(by='mlb_played_last', ascending=False)
+                    pid = int(df.iloc[0]['key_mlbam'])
+                    _id_cache[name] = pid; _save_cache(); return pid
+    except Exception:
+        pass
+
+    # 4) StatsAPI last-resort
+    pid = _search_statsapi_person_id(name)
+    if pid:
+        _id_cache[name] = pid; _save_cache(); return pid
 
     return None
 
@@ -211,7 +385,7 @@ with tab2:
                 batters = None
 
             # If empty/thin, try alternates. Oakland is the main pain point, but include some other common variants too.
-            def _thin(lst): 
+            def _thin(lst):
                 return (lst is None) or (len(lst) < 4)
 
             ALT_LISTS = {
@@ -336,7 +510,6 @@ with tab3:
             location = location_div.get_text()[2:].strip().lower()
             all_locations.append(location)
 
-
             weather_data = block.find_all("div", class_="weather-gametime-set")
 
             if len(weather_data) == 0:
@@ -354,25 +527,20 @@ with tab3:
             # Find all <path> elements within the <svg>
             paths = block.find_all("span", class_="weather-gametime-icon")[-1].find('svg').find_all('path')
 
-            # Target the third <path> (index 2, assuming you meant the one with rotate)
-            target_path = paths[2]  # Second path would be paths[1], but it has no rotate
+            # Target the third <path> (index 2) which has rotate
+            target_path = paths[2]
 
             # Get the style attribute
             style = target_path.get('style')
-
-            # Parse the style attribute to extract the transform property
             style_dict = dict(item.strip().split(':') for item in style.split(';') if item)
             transform = style_dict.get('transform', '')
 
-            # Extract the rotation angle from the transform property
-            import re
-
+            # Extract rotation angle from the transform
             rotation_match = re.search(r'rotate\(([\d.]+)deg\)', transform)
             if rotation_match:
                 rotation_angle = float(rotation_match.group(1))
             else:
                 rotation_angle = 0.0
-
 
             if any(k in location or location in k for k in keywords if k):
                 st.success(f"✅ Location match: `{location}`")
